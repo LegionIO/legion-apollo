@@ -1,0 +1,40 @@
+# frozen_string_literal: true
+
+require_relative '../../../lib/legion/apollo/messages/ingest'
+require_relative '../../../lib/legion/apollo/messages/query'
+require_relative '../../../lib/legion/apollo/messages/writeback'
+require_relative '../../../lib/legion/apollo/messages/access_boost'
+
+RSpec.describe 'Legion::Apollo::Messages' do
+  describe Legion::Apollo::Messages::Ingest do
+    it 'has correct routing key' do
+      expect(described_class::ROUTING_KEY).to eq('apollo.ingest')
+    end
+
+    it 'has correct exchange' do
+      expect(described_class::EXCHANGE).to eq('apollo')
+    end
+
+    it 'does not fail when transport is not available' do
+      expect { described_class.new.publish('{}') }.not_to raise_error
+    end
+  end
+
+  describe Legion::Apollo::Messages::Query do
+    it 'has correct routing key' do
+      expect(described_class::ROUTING_KEY).to eq('apollo.query')
+    end
+  end
+
+  describe Legion::Apollo::Messages::Writeback do
+    it 'has correct routing key' do
+      expect(described_class::ROUTING_KEY).to eq('apollo.writeback')
+    end
+  end
+
+  describe Legion::Apollo::Messages::AccessBoost do
+    it 'has correct routing key' do
+      expect(described_class::ROUTING_KEY).to eq('apollo.access.boost')
+    end
+  end
+end
