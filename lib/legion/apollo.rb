@@ -22,6 +22,8 @@ module Legion
 
         @started = true
         Legion::Logging.info 'Legion::Apollo started' if defined?(Legion::Logging)
+
+        seed_self_knowledge
       end
 
       def shutdown
@@ -283,6 +285,12 @@ module Legion
         end
       rescue StandardError => e
         { success: false, error: e.message }
+      end
+
+      def seed_self_knowledge
+        Legion::Apollo::Local.seed_self_knowledge if Legion::Apollo::Local.started?
+      rescue StandardError => e
+        Legion::Logging.debug("Apollo self-knowledge seed skipped: #{e.message}") if defined?(Legion::Logging)
       end
 
       def apollo_setting(key, default)

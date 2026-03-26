@@ -86,9 +86,70 @@ module Legion
 
         def reset!
           @started = false
+          @seeded = false
+        end
+
+        def seed_self_knowledge
+          return unless started?
+          return if @seeded
+
+          files = self_knowledge_files
+          return if files.empty?
+
+          count = seed_files(files)
+          @seeded = true
+          Legion::Logging.info("Apollo::Local seeded #{count} self-knowledge files") if defined?(Legion::Logging)
+        rescue StandardError => e
+          Legion::Logging.warn("Apollo::Local seed failed: #{e.message}") if defined?(Legion::Logging)
+          @seeded = true
+        end
+
+        def seeded?
+          @seeded == true
         end
 
         private
+
+        def self_knowledge_files
+          seed_dir = File.join(File.expand_path('../../..', __dir__), 'data', 'self-knowledge')
+          return [] unless File.directory?(seed_dir)
+
+          Dir[File.join(seed_dir, '*.md')]
+        end
+
+        def seed_files(files)
+          count = 0
+          files.each do |path|
+            count += 1 if seed_single_file(path)
+          end
+          count
+        end
+
+        def seed_single_file(path)
+          content = File.read(path)
+          return false if content.strip.empty?
+
+          tags = ['legionio', 'self-knowledge', File.basename(path, '.md')]
+          result = ingest(content: content, tags: tags, source_channel: 'self-knowledge',
+                          submitted_by: 'legion-apollo', confidence: 0.9)
+          return false unless result[:success] && result[:mode] != :deduplicated
+
+          ingest_global(content: content, tags: tags) if global_available?
+          true
+        end
+
+        def ingest_global(content:, tags:)
+          Legion::Apollo.ingest(content: content, tags: tags, source_channel: 'self-knowledge',
+                                submitted_by: 'legion-apollo', confidence: 0.9, scope: :global)
+        rescue StandardError => e
+          Legion::Logging.debug("Global seed ingest failed: #{e.message}") if defined?(Legion::Logging)
+        end
+
+        def global_available?
+          defined?(Legion::Apollo) && Legion::Apollo.started? && Legion::Apollo.respond_to?(:ingest)
+        rescue StandardError
+          false
+        end
 
         def local_enabled?
           return false unless defined?(Legion::Settings)
