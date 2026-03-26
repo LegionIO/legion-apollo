@@ -51,13 +51,13 @@ RSpec.describe Legion::Apollo::Local, '.seed_self_knowledge' do
     it 'tags entries with legionio and self-knowledge' do
       described_class.seed_self_knowledge
       row = local_db[:local_knowledge].first
-      tags = JSON.parse(row[:tags])
+      tags = Legion::JSON.parse(row[:tags])
       expect(tags).to include('legionio', 'self-knowledge')
     end
 
     it 'includes the filename as a tag' do
       described_class.seed_self_knowledge
-      all_tags = local_db[:local_knowledge].all.flat_map { |r| JSON.parse(r[:tags]) }
+      all_tags = local_db[:local_knowledge].all.flat_map { |r| Legion::JSON.parse(r[:tags]) }
       expect(all_tags).to include('01-what-is-legion')
     end
 

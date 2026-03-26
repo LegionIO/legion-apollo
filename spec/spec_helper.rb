@@ -33,6 +33,7 @@ module Legion
 
   module JSON
     def self.dump(obj) = ::JSON.generate(obj)
+    def self.parse(str, **) = ::JSON.parse(str, **)
   end
 end
 

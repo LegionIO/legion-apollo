@@ -224,7 +224,7 @@ module Legion
           hash = e[:content_hash] || Digest::MD5.hexdigest(e[:content].to_s.strip.downcase.gsub(/\s+/, ' '))
           tags = if e[:tags].is_a?(String)
                    begin
-                     ::JSON.parse(e[:tags])
+                     Legion::JSON.parse(e[:tags])
                    rescue StandardError
                      []
                    end

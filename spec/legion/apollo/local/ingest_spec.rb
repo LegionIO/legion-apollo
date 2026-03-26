@@ -79,7 +79,7 @@ RSpec.describe 'Apollo::Local ingest' do
     row = db[:local_knowledge].first
     expect(row[:embedding]).not_to be_nil
     expect(row[:embedded_at]).not_to be_nil
-    parsed = JSON.parse(row[:embedding])
+    parsed = Legion::JSON.parse(row[:embedding])
     expect(parsed.size).to eq(1024)
   end
 

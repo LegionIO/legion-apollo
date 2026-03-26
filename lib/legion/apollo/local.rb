@@ -247,7 +247,7 @@ module Legion
         def parse_tags(tags_json)
           return [] if tags_json.nil? || tags_json.empty?
 
-          ::JSON.parse(tags_json)
+          Legion::JSON.parse(tags_json)
         rescue StandardError
           []
         end
@@ -279,7 +279,7 @@ module Legion
         def parse_embedding(embedding_json)
           return nil if embedding_json.nil? || embedding_json.empty?
 
-          parsed = ::JSON.parse(embedding_json)
+          parsed = Legion::JSON.parse(embedding_json)
           parsed.is_a?(Array) ? parsed.map(&:to_f) : nil
         rescue StandardError
           nil
