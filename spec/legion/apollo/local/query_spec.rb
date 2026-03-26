@@ -16,6 +16,7 @@ RSpec.describe 'Apollo::Local query' do
 
     stub_const('Legion::Data::Local', Module.new do
       extend self
+
       define_method(:connected?) { true }
       define_method(:connection) { local_db }
       define_method(:register_migrations) { |**_| nil }
@@ -63,7 +64,8 @@ RSpec.describe 'Apollo::Local query' do
       content: 'expired entry', content_hash: 'expired123', tags: '["test"]',
       confidence: 1.0, expires_at: past, created_at: now, updated_at: now
     )
-    db.run("INSERT INTO local_knowledge_fts(rowid, content, tags) VALUES (#{db[:local_knowledge].max(:id)}, 'expired entry', '[\"test\"]')")
+    fts_id = db[:local_knowledge].max(:id)
+    db.run("INSERT INTO local_knowledge_fts(rowid, content, tags) VALUES (#{fts_id}, 'expired entry', '[\"test\"]')")
     result = Legion::Apollo::Local.query(text: 'expired')
     expired_results = result[:results].select { |r| r[:content] == 'expired entry' }
     expect(expired_results).to be_empty

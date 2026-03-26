@@ -7,10 +7,10 @@ module Legion
   module Apollo
     # Node-local knowledge store backed by SQLite + FTS5.
     # Mirrors Legion::Apollo's public API but stores locally.
-    module Local
+    module Local # rubocop:disable Metrics/ModuleLength
       MIGRATION_PATH = File.expand_path('local/migrations', __dir__).freeze
 
-      class << self
+      class << self # rubocop:disable Metrics/ClassLength
         def start
           return if @started
           return unless local_enabled?
@@ -30,7 +30,7 @@ module Legion
           @started == true
         end
 
-        def ingest(content:, tags: [], **opts) # rubocop:disable Metrics/MethodLength
+        def ingest(content:, tags: [], **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           return not_started_error unless started?
 
           hash = content_hash(content)
@@ -63,7 +63,7 @@ module Legion
           { success: false, error: e.message }
         end
 
-        def query(text:, limit: nil, min_confidence: nil, tags: nil, **) # rubocop:disable Metrics/MethodLength
+        def query(text:, limit: nil, min_confidence: nil, tags: nil, **) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           return not_started_error unless started?
 
           limit ||= local_setting(:default_limit, 5)
@@ -120,13 +120,15 @@ module Legion
         end
 
         def duplicate?(hash)
-          db[:local_knowledge].where(content_hash: hash).count.positive?
+          db[:local_knowledge].where(content_hash: hash).any?
         rescue StandardError
           false
         end
 
-        def generate_embedding(content)
-          return [nil, nil] unless defined?(Legion::LLM) && Legion::LLM.respond_to?(:can_embed?) && Legion::LLM.can_embed?
+        def generate_embedding(content) # rubocop:disable Metrics/MethodLength,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+          unless defined?(Legion::LLM) && Legion::LLM.respond_to?(:can_embed?) && Legion::LLM.can_embed?
+            return [nil, nil]
+          end
 
           result = Legion::LLM::Embeddings.generate(text: content)
           vector = result.is_a?(Hash) ? result[:vector] : result
@@ -145,18 +147,20 @@ module Legion
         end
 
         def sync_fts(id, content, tags_json)
-          db.run("INSERT INTO local_knowledge_fts(rowid, content, tags) VALUES (#{id}, #{db.literal(content)}, #{db.literal(tags_json)})")
+          sql = 'INSERT INTO local_knowledge_fts(rowid, content, tags) ' \
+                "VALUES (#{id}, #{db.literal(content)}, #{db.literal(tags_json)})"
+          db.run(sql)
         rescue StandardError => e
           Legion::Logging.warn("FTS5 sync failed for id=#{id}: #{e.message}") if defined?(Legion::Logging)
         end
 
-        def fts_search(text, limit:)
+        def fts_search(text, limit:) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           escaped = text.to_s.gsub('"', '""')
           now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
           db.fetch(
             'SELECT lk.* FROM local_knowledge lk ' \
             'INNER JOIN local_knowledge_fts fts ON lk.id = fts.rowid ' \
-            "WHERE local_knowledge_fts MATCH ? AND lk.expires_at > ? ORDER BY fts.rank LIMIT ?",
+            'WHERE local_knowledge_fts MATCH ? AND lk.expires_at > ? ORDER BY fts.rank LIMIT ?',
             escaped, now, limit
           ).all
         rescue StandardError
@@ -173,7 +177,7 @@ module Legion
             tag_set = Array(tags).map(&:to_s)
             candidates = candidates.select do |c|
               entry_tags = parse_tags(c[:tags])
-              (tag_set & entry_tags).any?
+              tag_set.intersect?(entry_tags)
             end
           end
           candidates
@@ -191,7 +195,7 @@ module Legion
           defined?(Legion::LLM) && Legion::LLM.respond_to?(:can_embed?) && Legion::LLM.can_embed?
         end
 
-        def cosine_rerank(text, candidates)
+        def cosine_rerank(text, candidates) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
           query_result = Legion::LLM::Embeddings.generate(text: text)
           query_vec = query_result.is_a?(Hash) ? query_result[:vector] : query_result
           return candidates unless query_vec.is_a?(Array) && query_vec.any?

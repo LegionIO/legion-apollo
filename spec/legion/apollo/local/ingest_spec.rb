@@ -16,6 +16,7 @@ RSpec.describe 'Apollo::Local ingest' do
 
     stub_const('Legion::Data::Local', Module.new do
       extend self
+
       define_method(:connected?) { true }
       define_method(:connection) { local_db }
       define_method(:register_migrations) { |**_| nil }
@@ -65,18 +66,20 @@ RSpec.describe 'Apollo::Local ingest' do
   it 'stores embedding when LLM is available' do
     stub_const('Legion::LLM', Module.new do
       extend self
+
       define_method(:can_embed?) { true }
     end)
     stub_const('Legion::LLM::Embeddings', Module.new do
       extend self
-      define_method(:generate) { |text:| { vector: Array.new(1024, 0.1), model: 'test' } }
+
+      define_method(:generate) { |**_| { vector: Array.new(1024, 0.1), model: 'test' } }
     end)
 
     Legion::Apollo::Local.ingest(content: 'with embedding', tags: [])
     row = db[:local_knowledge].first
     expect(row[:embedding]).not_to be_nil
     expect(row[:embedded_at]).not_to be_nil
-    parsed = ::JSON.parse(row[:embedding])
+    parsed = JSON.parse(row[:embedding])
     expect(parsed.size).to eq(1024)
   end
 

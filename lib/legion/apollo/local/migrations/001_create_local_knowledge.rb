@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-Sequel.migration do
+Sequel.migration do # rubocop:disable Metrics/BlockLength
   up do
     create_table(:local_knowledge) do
       primary_key :id
@@ -22,7 +22,9 @@ Sequel.migration do
       index :embedded_at, name: :idx_local_knowledge_embedded
     end
 
-    run "CREATE VIRTUAL TABLE IF NOT EXISTS local_knowledge_fts USING fts5(content, tags, content='local_knowledge', content_rowid='id')"
+    fts_sql = 'CREATE VIRTUAL TABLE IF NOT EXISTS local_knowledge_fts ' \
+              "USING fts5(content, tags, content='local_knowledge', content_rowid='id')"
+    run fts_sql
   end
 
   down do

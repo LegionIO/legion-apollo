@@ -19,6 +19,7 @@ RSpec.describe Legion::Apollo::Local do
       before do
         stub_const('Legion::Data::Local', Module.new do
           extend self
+
           define_method(:connected?) { true }
           define_method(:connection) { db }
           define_method(:register_migrations) { |**_| nil }
