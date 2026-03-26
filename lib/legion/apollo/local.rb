@@ -101,7 +101,6 @@ module Legion
           Legion::Logging.info("Apollo::Local seeded #{count} self-knowledge files") if defined?(Legion::Logging)
         rescue StandardError => e
           Legion::Logging.warn("Apollo::Local seed failed: #{e.message}") if defined?(Legion::Logging)
-          @seeded = true
         end
 
         def seeded?

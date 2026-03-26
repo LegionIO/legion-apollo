@@ -2,7 +2,7 @@
 
 Apollo client library for the LegionIO framework.
 
-**Version**: 0.3.1
+**Version**: 0.3.2
 
 Provides `query`, `ingest`, and `retrieve` with smart routing: co-located lex-apollo service, RabbitMQ transport, or graceful failure. Supports a node-local SQLite knowledge store (`Apollo::Local`) that mirrors the same API without requiring any remote infrastructure.
 
@@ -33,7 +33,7 @@ results = Legion::Apollo.query(text: 'ruby', scope: :all)
 
 ## Local Store
 
-`Apollo::Local` provides a node-local knowledge store backed by SQLite + FTS5. It starts automatically when `Legion::Data::Local` is available and `Settings[:apollo][:local][:enabled]` is not false.
+`Apollo::Local` provides a node-local knowledge store backed by SQLite + FTS5. When started (e.g., via `Legion::Apollo.start`, which calls `Legion::Apollo::Local.start` automatically), it uses `Legion::Data::Local` when available and respects `Settings[:apollo][:local][:enabled]`.
 
 Features:
 - Content-hash dedup (MD5 of normalized content)

@@ -23,6 +23,7 @@ module Legion
         @started = true
         Legion::Logging.info 'Legion::Apollo started' if defined?(Legion::Logging)
 
+        Legion::Apollo::Local.start
         seed_self_knowledge
       end
 
