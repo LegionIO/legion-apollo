@@ -291,7 +291,9 @@ module Legion
       def seed_self_knowledge
         Legion::Apollo::Local.seed_self_knowledge if Legion::Apollo::Local.started?
       rescue StandardError => e
-        Legion::Logging.debug("Apollo self-knowledge seed skipped: #{e.message}") if defined?(Legion::Logging)
+        if defined?(Legion::Logging)
+          Legion::Logging.warn("Apollo self-knowledge seed failed (#{e.class}): #{e.message}")
+        end
       end
 
       def apollo_setting(key, default)

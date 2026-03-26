@@ -16,7 +16,7 @@ LegionIO connects isolated systems — cloud accounts, on-premise services, SaaS
 - Provides a unified REST API on port 4567 for all operations
 - Integrates with HashiCorp Vault for secrets and authentication
 - Supports Kerberos auto-authentication to Vault using existing AD credentials
-- Runs an 19-step LLM pipeline with RAG, guardrails, cost tracking, and model routing
+- Runs a 19-step LLM pipeline with RAG, guardrails, cost tracking, and model routing
 - Maintains a shared knowledge store (Apollo) for organizational knowledge
 - Provides a rich terminal UI with AI chat, dashboard, and extension browser
 - Tracks token usage and costs per-user and per-team
