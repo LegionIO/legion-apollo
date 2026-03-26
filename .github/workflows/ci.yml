@@ -4,26 +4,26 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+  schedule:
+    - cron: '0 9 * * 1'
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        ruby-version: ['3.4']
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: ${{ matrix.ruby-version }}
-          bundler-cache: true
-
-      - name: Run tests
-        run: bundle exec rspec
-
-      - name: Run linter
-        run: bundle exec rubocop
+  ci:
+    uses: LegionIO/.github/.github/workflows/ci.yml@main
+  lint:
+    uses: LegionIO/.github/.github/workflows/lint-patterns.yml@main
+  security:
+    uses: LegionIO/.github/.github/workflows/security-scan.yml@main
+  version-changelog:
+    uses: LegionIO/.github/.github/workflows/version-changelog.yml@main
+  dependency-review:
+    uses: LegionIO/.github/.github/workflows/dependency-review.yml@main
+  stale:
+    if: github.event_name == 'schedule'
+    uses: LegionIO/.github/.github/workflows/stale.yml@main
+  release:
+    needs: [ci, lint]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    uses: LegionIO/.github/.github/workflows/release.yml@main
+    secrets:
+      rubygems-api-key: ${{ secrets.RUBYGEMS_API_KEY }}
