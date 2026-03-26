@@ -81,7 +81,7 @@ module Legion
       end
 
       def retrieve(text:, limit: 5, scope: :global, **)
-        query(text: text, limit: limit, scope: scope)
+        query(text: text, limit: limit, scope: scope, **)
       end
 
       def transport_available?
@@ -177,19 +177,38 @@ module Legion
 
       def query_merged(payload) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
         entries = []
+        attempted = false
+        any_success = false
+        errors = []
 
         if co_located_reader?
+          attempted = true
           global = direct_query(payload)
-          entries.concat(normalize_global_entries(Array(global[:entries]))) if global[:success] && global[:entries]
+          if global[:success]
+            any_success = true
+            entries.concat(normalize_global_entries(Array(global[:entries]))) if global[:entries]
+          else
+            errors << global[:error]
+          end
         end
 
         if Legion::Apollo::Local.started?
+          attempted = true
           local = Legion::Apollo::Local.query(**payload.slice(:text, :limit, :min_confidence, :tags))
-          entries.concat(normalize_local_entries(Array(local[:results]))) if local[:success] && local[:results]
+          if local[:success]
+            any_success = true
+            entries.concat(normalize_local_entries(Array(local[:results]))) if local[:results]
+          else
+            errors << local[:error]
+          end
         end
 
-        if entries.empty? && !co_located_reader? && !Legion::Apollo::Local.started?
-          return { success: false, error: :no_path_available }
+        return { success: false, error: :no_path_available } unless attempted
+
+        unless any_success
+          combined_error = errors.compact.map(&:to_s).reject(&:empty?).join('; ')
+          combined_error = :upstream_query_failed if combined_error.empty?
+          return { success: false, error: combined_error }
         end
 
         ranked = dedup_and_rank(entries, limit: payload[:limit])
@@ -225,10 +244,11 @@ module Legion
       end
 
       def dedup_and_rank(entries, limit:)
-        entries
-          .sort_by { |e| -(e[:confidence] || 0) }
-          .uniq    { |e| e[:content_hash] }
-          .first(limit)
+        sorted = entries
+                 .sort_by { |e| -(e[:confidence] || 0) }
+                 .uniq { |e| e[:content_hash] }
+
+        limit ? sorted.first(limit) : sorted
       end
 
       def ingest_local(payload)
@@ -239,7 +259,7 @@ module Legion
         { success: false, error: e.message }
       end
 
-      def ingest_all(payload) # rubocop:disable Metrics/MethodLength
+      def ingest_all(payload) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
         results = []
 
         if co_located_writer?
@@ -252,7 +272,15 @@ module Legion
 
         return { success: false, error: :no_path_available } if results.empty?
 
-        { success: true, mode: :all, results: results }
+        overall_success = results.any? { |r| r.respond_to?(:[]) && r[:success] }
+
+        if overall_success
+          { success: true, mode: :all, results: results }
+        else
+          errors = results.select { |r| r.respond_to?(:[]) }.map { |r| r[:error] }.compact.uniq
+          error_value = errors.length <= 1 ? errors.first : errors
+          { success: false, mode: :all, results: results, error: error_value }
+        end
       rescue StandardError => e
         { success: false, error: e.message }
       end
