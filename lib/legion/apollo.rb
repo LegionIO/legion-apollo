@@ -2,6 +2,7 @@
 
 require_relative 'apollo/version'
 require_relative 'apollo/settings'
+require_relative 'apollo/local'
 
 module Legion
   # Apollo client library — query, ingest, and retrieve with smart routing.
@@ -29,6 +30,10 @@ module Legion
 
       def started?
         @started == true
+      end
+
+      def local
+        Legion::Apollo::Local
       end
 
       def query(text:, limit: nil, min_confidence: nil, tags: nil, **opts) # rubocop:disable Metrics/MethodLength
