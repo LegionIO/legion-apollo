@@ -14,7 +14,7 @@ Gem::Specification.new do |spec|
   spec.license       = 'Apache-2.0'
   spec.require_paths = ['lib']
   spec.required_ruby_version = '>= 3.4'
-  spec.files = Dir['lib/**/*', 'LICENSE', 'README.md', 'CHANGELOG.md']
+  spec.files = Dir['lib/**/*', 'data/**/*', 'LICENSE', 'README.md', 'CHANGELOG.md']
   spec.extra_rdoc_files = %w[README.md LICENSE CHANGELOG.md]
   spec.metadata = {
     'bug_tracker_uri'       => 'https://github.com/LegionIO/legion-apollo/issues',

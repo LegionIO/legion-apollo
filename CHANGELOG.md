@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.2] - 2026-03-26
+
+### Added
+- Self-knowledge seed system: 10 markdown documents covering LegionIO identity, architecture, extensions, security, LLM pipeline, Apollo, CLI, cognitive layer, Teams integration, and deployment
+- `Apollo::Local.seed_self_knowledge` auto-ingests self-knowledge docs on boot (local + global)
+- `Apollo::Local.seeded?` query method
+- `data/**/*` included in gemspec so self-knowledge ships with the gem
+
+### Changed
+- Refactored `seed_self_knowledge` into smaller helpers (`self_knowledge_files`, `seed_files`, `seed_single_file`) to satisfy rubocop complexity
+
 ## [0.3.1] - 2026-03-26
 
 ### Added

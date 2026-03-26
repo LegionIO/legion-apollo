@@ -22,6 +22,9 @@ module Legion
 
         @started = true
         Legion::Logging.info 'Legion::Apollo started' if defined?(Legion::Logging)
+
+        Legion::Apollo::Local.start
+        seed_self_knowledge
       end
 
       def shutdown
@@ -222,7 +225,7 @@ module Legion
           hash = e[:content_hash] || Digest::MD5.hexdigest(e[:content].to_s.strip.downcase.gsub(/\s+/, ' '))
           tags = if e[:tags].is_a?(String)
                    begin
-                     ::JSON.parse(e[:tags])
+                     Legion::JSON.parse(e[:tags])
                    rescue StandardError
                      []
                    end
@@ -283,6 +286,14 @@ module Legion
         end
       rescue StandardError => e
         { success: false, error: e.message }
+      end
+
+      def seed_self_knowledge
+        Legion::Apollo::Local.seed_self_knowledge if Legion::Apollo::Local.started?
+      rescue StandardError => e
+        if defined?(Legion::Logging)
+          Legion::Logging.warn("Apollo self-knowledge seed failed (#{e.class}): #{e.message}")
+        end
       end
 
       def apollo_setting(key, default)
