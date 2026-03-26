@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1] - 2026-03-26
+
+### Added
+- `scope:` param on `query`/`retrieve`/`ingest` — `:global` (default), `:local` (SQLite only), `:all` (merged global + local)
+- `Legion::Apollo::Runners::Request` shim — GAIA `knowledge_retrieval` phase now resolves to merged retrieval without any changes to `legion-gaia`
+- Merge helpers: `query_merged`, `normalize_local_entries`, `normalize_global_entries`, `dedup_and_rank`
+- Ingest routing: `ingest_local` and `ingest_all` private helpers
+
 ## [0.3.0] - 2026-03-25
 
 ### Added

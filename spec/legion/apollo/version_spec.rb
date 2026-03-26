@@ -2,6 +2,6 @@
 
 RSpec.describe Legion::Apollo do
   it 'has a version' do
-    expect(Legion::Apollo::VERSION).to eq('0.3.0')
+    expect(Legion::Apollo::VERSION).to eq('0.3.1')
   end
 end
