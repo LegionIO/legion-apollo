@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.3] - 2026-03-28
+
+### Added
+- `Legion::Apollo::Routes` Sinatra extension module (`lib/legion/apollo/routes.rb`): all `/api/apollo/*` route definitions extracted from `LegionIO/lib/legion/api/apollo.rb`. Self-registers with `Legion::API.register_library_routes('apollo', Legion::Apollo::Routes)` at the end of `Legion::Apollo.start`.
+- `register_routes` private method on `Legion::Apollo` module.
+
+### Changed
+- `Legion::Apollo.start` now calls `register_routes` after setting `@started = true`.
+
 ## [0.3.2] - 2026-03-26
 
 ### Added
