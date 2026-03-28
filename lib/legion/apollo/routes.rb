@@ -133,7 +133,7 @@ module Legion
       end
 
       # Helper methods mixed into the Sinatra app context
-      module ApolloHelpers
+      module ApolloHelpers # rubocop:disable Metrics/ModuleLength
         def apollo_runner_available?
           return false unless defined?(Legion::Extensions::Apollo::Runners::Knowledge)
 
@@ -158,21 +158,23 @@ module Legion
         end
 
         def apollo_runner
-          @apollo_runner ||= Object.new.extend(Legion::Extensions::Apollo::Runners::Knowledge)
+          Legion::Extensions::Apollo::Runners::Knowledge
         end
 
-        def apollo_maintenance_runner
-          unless defined?(Legion::Extensions::Apollo::Runners::Maintenance)
-            halt 503, json_error('maintenance_unavailable', 'Apollo maintenance runner is not loaded')
-          end
+        def apollo_maintenance_runner # rubocop:disable Metrics/MethodLength
+          @apollo_maintenance_runner ||= begin
+            unless defined?(Legion::Extensions::Apollo::Runners::Maintenance)
+              halt 503, json_error('maintenance_unavailable', 'Apollo maintenance runner is not loaded')
+            end
 
-          runner = Object.new.extend(Legion::Extensions::Apollo::Runners::Maintenance)
-          required = %i[run_decay_cycle check_corroboration]
-          unless required.all? { |m| runner.respond_to?(m) }
-            halt 503, json_error('maintenance_unavailable', 'Apollo maintenance runner is missing required actions')
-          end
+            runner = Object.new.extend(Legion::Extensions::Apollo::Runners::Maintenance)
+            required = %i[run_decay_cycle check_corroboration]
+            unless required.all? { |m| runner.respond_to?(m) }
+              halt 503, json_error('maintenance_unavailable', 'Apollo maintenance runner is missing required actions')
+            end
 
-          @apollo_maintenance_runner ||= runner
+            runner
+          end
         end
 
         def run_maintenance(action)
