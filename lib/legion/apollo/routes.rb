@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require_relative 'helpers/tag_normalizer'
+
 # Self-registering route module for legion-apollo.
 # All routes previously defined in LegionIO/lib/legion/api/apollo.rb now live here
 # and are mounted via Legion::API.register_library_routes when legion-apollo boots.
@@ -95,15 +97,18 @@ module Legion
         end
       end
 
-      def self.register_maintenance_route(app)
+      def self.register_maintenance_route(app) # rubocop:disable Metrics/MethodLength
         app.post '/api/apollo/maintenance' do
           halt 503, json_error('apollo_unavailable', 'apollo is not available', status_code: 503) unless apollo_loaded?
 
           body = parse_request_body
           action = body[:action]&.to_sym
-          halt 400, json_error('invalid_action', 'action must be decay_cycle or corroboration') unless %i[
+          unless %i[
             decay_cycle corroboration
           ].include?(action)
+            halt 400,
+                 json_error('invalid_action', 'action must be decay_cycle or corroboration', status_code: 400)
+          end
 
           result = run_maintenance(action)
           json_response(result)
