@@ -147,7 +147,7 @@ module Legion
       end
 
       # Helper methods mixed into the Sinatra app context
-      module ApolloHelpers # rubocop:disable Metrics/ModuleLength
+      module ApolloHelpers
         def apollo_runner_available?
           return false unless defined?(Legion::Extensions::Apollo::Runners::Knowledge)
 
@@ -200,74 +200,41 @@ module Legion
           end
         end
 
-        def apollo_graph_topology # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
-          return { error: 'Sequel not available' } unless defined?(Sequel) && apollo_data_connected?
+        def apollo_graph_topology
+          return { error: 'Apollo runner unavailable' } unless apollo_runner_available?
+          unless apollo_runner.respond_to?(:graph_topology)
+            return { error: 'Apollo graph_topology not supported by runner' }
+          end
 
-          conn = Legion::Data.connection
-          entries = conn[:apollo_entries]
-          relations = conn[:apollo_relations]
-
-          by_domain = entries.group_and_count(:knowledge_domain).all
-                             .to_h { |r| [r[:knowledge_domain] || 'general', r[:count]] }
-          by_agent = entries.group_and_count(:source_agent).all
-                            .to_h { |r| [r[:source_agent] || 'unknown', r[:count]] }
-          by_relation = relations.group_and_count(:relation_type).all
-                                 .to_h { |r| [r[:relation_type], r[:count]] }
-          disputed   = entries.where(status: 'disputed').count
-          confirmed  = entries.where(status: 'confirmed').count
-          candidates = entries.where(status: 'candidate').count
-
-          {
-            domains:          by_domain,
-            agents:           by_agent,
-            relation_types:   by_relation,
-            total_relations:  relations.count,
-            disputed_entries: disputed,
-            confirmed:        confirmed,
-            candidates:       candidates
-          }
-        rescue Sequel::Error => e
-          Legion::Logging.warn("apollo_graph_topology DB error: #{e.class}") if defined?(Legion::Logging)
+          apollo_runner.graph_topology
+        rescue StandardError => e
+          Legion::Logging.debug("Apollo#apollo_graph_topology failed: #{e.message}") if defined?(Legion::Logging)
           { error: 'apollo_graph_topology unavailable' }
         end
 
-        def apollo_expertise_map # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
-          return { error: 'Sequel not available' } unless defined?(Sequel) && apollo_data_connected?
-
-          conn = Legion::Data.connection
-          rows = conn[:apollo_expertise].order(Sequel.desc(:proficiency)).all
-
-          by_domain = {}
-          rows.each do |row|
-            domain = row[:domain] || 'general'
-            by_domain[domain] ||= []
-            by_domain[domain] << {
-              agent_id:    row[:agent_id],
-              proficiency: row[:proficiency]&.round(3),
-              entry_count: row[:entry_count]
-            }
+        def apollo_expertise_map
+          return { error: 'Apollo runner unavailable' } unless apollo_runner_available?
+          unless apollo_runner.respond_to?(:expertise_map)
+            return { error: 'Apollo expertise_map not supported by runner' }
           end
 
-          { domains: by_domain, total_agents: rows.map { |r| r[:agent_id] }.uniq.size,
-            total_domains: by_domain.size }
-        rescue Sequel::Error => e
-          Legion::Logging.warn("apollo_expertise_map DB error: #{e.class}") if defined?(Legion::Logging)
+          apollo_runner.expertise_map
+        rescue StandardError => e
+          Legion::Logging.debug("Apollo#apollo_expertise_map failed: #{e.message}") if defined?(Legion::Logging)
           { error: 'apollo_expertise_map unavailable' }
         end
 
-        def apollo_stats # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/MethodLength
-          return { total_entries: 0, error: 'Sequel not available' } unless defined?(Sequel) && apollo_data_connected?
+        def apollo_stats
+          return { total_entries: 0, error: 'Apollo runner unavailable' } unless apollo_runner_available?
+          unless apollo_runner.respond_to?(:stats)
+            return { total_entries: 0,
+                     error:         'Apollo stats not supported by runner' }
+          end
 
-          entries = Legion::Data.connection[:apollo_entries]
-          {
-            total_entries:   entries.count,
-            by_status:       entries.group_and_count(:status).all.to_h { |r| [r[:status], r[:count]] },
-            by_content_type: entries.group_and_count(:content_type).all.to_h { |r| [r[:content_type], r[:count]] },
-            recent_24h:      entries.where { created_at >= (Time.now.utc - 86_400) }.count,
-            avg_confidence:  entries.avg(:confidence)&.round(3) || 0.0
-          }
-        rescue Sequel::Error
-          { total_entries: 0, error: 'apollo_entries table not available' }
+          apollo_runner.stats
+        rescue StandardError => e
+          Legion::Logging.debug("Apollo#apollo_stats failed: #{e.message}") if defined?(Legion::Logging)
+          { total_entries: 0, error: 'apollo_stats unavailable' }
         end
       end
     end
