@@ -93,4 +93,27 @@ RSpec.describe Legion::Apollo do
       expect(described_class.data_available?).to be true
     end
   end
+
+  describe 'register_routes (called during .start)' do
+    context 'when Legion::API is available and responds to register_library_routes' do
+      let(:fake_api) do
+        Module.new do
+          def self.register_library_routes(_name, _mod); end
+        end
+      end
+
+      it 'calls register_library_routes with apollo and Routes module' do
+        stub_const('Legion::API', fake_api)
+        expect(Legion::API).to receive(:register_library_routes).with('apollo', Legion::Apollo::Routes)
+        described_class.start
+      end
+    end
+
+    context 'when Legion::API is not defined' do
+      it 'does not raise and completes start normally' do
+        expect { described_class.start }.not_to raise_error
+        expect(described_class.started?).to be true
+      end
+    end
+  end
 end

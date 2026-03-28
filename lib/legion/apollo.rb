@@ -5,6 +5,7 @@ require_relative 'apollo/version'
 require_relative 'apollo/settings'
 require_relative 'apollo/local'
 require_relative 'apollo/runners'
+require_relative 'apollo/routes'
 
 module Legion
   # Apollo client library — query, ingest, and retrieve with smart routing.
@@ -23,6 +24,7 @@ module Legion
         @started = true
         Legion::Logging.info 'Legion::Apollo started' if defined?(Legion::Logging)
 
+        register_routes
         Legion::Apollo::Local.start
         seed_self_knowledge
       end
@@ -306,6 +308,15 @@ module Legion
 
       def not_started_error
         { success: false, error: :not_started }
+      end
+
+      def register_routes
+        return unless defined?(Legion::API) && Legion::API.respond_to?(:register_library_routes)
+
+        Legion::API.register_library_routes('apollo', Legion::Apollo::Routes)
+        Legion::Logging.debug 'Legion::Apollo routes registered with API' if defined?(Legion::Logging)
+      rescue StandardError => e
+        Legion::Logging.warn "Legion::Apollo route registration failed: #{e.message}" if defined?(Legion::Logging)
       end
     end
   end
