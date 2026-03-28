@@ -31,7 +31,7 @@ module Legion
           data_connected = apollo_data_connected?
           status_code    = available && data_connected ? 200 : 503
 
-          json_response({ available: available && data_connected, data_connected: data_connected },
+          json_response({ available: available, data_connected: data_connected },
                         status_code: status_code)
         end
       end
@@ -40,7 +40,12 @@ module Legion
         app.get '/api/apollo/stats' do
           halt 503, json_error('apollo_unavailable', 'apollo is not available', status_code: 503) unless apollo_loaded?
 
-          json_response(apollo_stats)
+          stats = apollo_stats
+          if stats[:error]
+            halt 503, json_error('apollo_stats_unavailable', stats[:error], status_code: 503)
+          else
+            json_response(stats)
+          end
         end
       end
 
@@ -69,7 +74,9 @@ module Legion
 
           body = parse_request_body
           max_tags = defined?(Legion::Settings) ? (Legion::Settings[:apollo]&.dig(:max_tags) || 20) : 20
-          tags = Legion::Apollo::Helpers::TagNormalizer.normalize(Array(body[:tags])).first(max_tags)
+          # TagNormalizer hard-caps to MAX_TAGS=20 internally; clamp here to make that limit explicit.
+          effective_max_tags = [max_tags, Legion::Apollo::Helpers::TagNormalizer::MAX_TAGS].min
+          tags = Legion::Apollo::Helpers::TagNormalizer.normalize(Array(body[:tags])).first(effective_max_tags)
           result = apollo_runner.handle_ingest(
             content:          body[:content],
             content_type:     body[:content_type] || :observation,
@@ -102,13 +109,15 @@ module Legion
           halt 503, json_error('apollo_unavailable', 'apollo is not available', status_code: 503) unless apollo_loaded?
 
           body = parse_request_body
-          action = body[:action]&.to_sym
-          unless %i[
+          action_str = body[:action]
+          unless %w[
             decay_cycle corroboration
-          ].include?(action)
+          ].include?(action_str)
             halt 400,
                  json_error('invalid_action', 'action must be decay_cycle or corroboration', status_code: 400)
           end
+
+          action = action_str.to_sym
 
           result = run_maintenance(action)
           json_response(result)
@@ -218,7 +227,8 @@ module Legion
             candidates:       candidates
           }
         rescue Sequel::Error => e
-          { error: e.message }
+          Legion::Logging.warn("apollo_graph_topology DB error: #{e.class}") if defined?(Legion::Logging)
+          { error: 'apollo_graph_topology unavailable' }
         end
 
         def apollo_expertise_map # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
@@ -241,7 +251,8 @@ module Legion
           { domains: by_domain, total_agents: rows.map { |r| r[:agent_id] }.uniq.size,
             total_domains: by_domain.size }
         rescue Sequel::Error => e
-          { error: e.message }
+          Legion::Logging.warn("apollo_expertise_map DB error: #{e.class}") if defined?(Legion::Logging)
+          { error: 'apollo_expertise_map unavailable' }
         end
 
         def apollo_stats # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/MethodLength
