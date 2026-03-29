@@ -195,7 +195,7 @@ module Legion
             return [nil, nil]
           end
 
-          result = Legion::LLM::Embeddings.generate(text: content)
+          result = Legion::LLM.embed(content)
           vector = result.is_a?(Hash) ? result[:vector] : result
           if vector.is_a?(Array) && vector.any?
             [vector, Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')]
@@ -261,7 +261,7 @@ module Legion
         end
 
         def cosine_rerank(text, candidates) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
-          query_result = Legion::LLM::Embeddings.generate(text: text)
+          query_result = Legion::LLM.embed(text)
           query_vec = query_result.is_a?(Hash) ? query_result[:vector] : query_result
           return candidates unless query_vec.is_a?(Array) && query_vec.any?
 

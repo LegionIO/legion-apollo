@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.5] - 2026-03-28
+
+### Fixed
+- use `Legion::LLM.embed` instead of `Legion::LLM::Embeddings.generate` in Local store — the Embeddings module is autoloaded and not available until `embed` or `embed_direct` is called through the public API
+
 ## [0.3.4] - 2026-03-28
 
 ### Added

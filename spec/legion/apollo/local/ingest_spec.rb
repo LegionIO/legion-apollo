@@ -68,11 +68,7 @@ RSpec.describe 'Apollo::Local ingest' do
       extend self
 
       define_method(:can_embed?) { true }
-    end)
-    stub_const('Legion::LLM::Embeddings', Module.new do
-      extend self
-
-      define_method(:generate) { |**_| { vector: Array.new(1024, 0.1), model: 'test' } }
+      define_method(:embed) { |_text, **_| { vector: Array.new(1024, 0.1), model: 'test' } }
     end)
 
     Legion::Apollo::Local.ingest(content: 'with embedding', tags: [])
