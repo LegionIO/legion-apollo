@@ -89,6 +89,28 @@ module Legion
         query(text: text, limit: limit, scope: scope, **)
       end
 
+      # Graph traversal — delegates to Local::Graph for node-local SQLite store.
+      # Follows entity edges of the given relation_type up to depth hops.
+      #
+      # @param entity_id [Integer] starting entity id
+      # @param relation_type [String, nil] edge filter (nil = any)
+      # @param depth [Integer] max traversal hops (1..10)
+      # @param direction [Symbol] :outbound (default) or :inbound
+      # @return [Hash] { success:, nodes:, edges:, count: }
+      def graph_query(entity_id:, relation_type: nil, depth: 3, direction: :outbound)
+        return not_started_error unless started?
+        return { success: false, error: :local_not_started } unless Legion::Apollo::Local.started?
+
+        Legion::Apollo::Local::Graph.traverse(
+          entity_id:     entity_id,
+          relation_type: relation_type,
+          depth:         depth,
+          direction:     direction
+        )
+      rescue StandardError => e
+        { success: false, error: e.message }
+      end
+
       def transport_available?
         @transport_available == true
       end

@@ -2,6 +2,7 @@
 
 require 'digest'
 require 'time'
+require_relative 'local/graph'
 
 module Legion
   module Apollo
@@ -82,6 +83,10 @@ module Legion
 
         def retrieve(text:, limit: 5, **)
           query(text: text, limit: limit, **)
+        end
+
+        def graph
+          Legion::Apollo::Local::Graph
         end
 
         def reset!

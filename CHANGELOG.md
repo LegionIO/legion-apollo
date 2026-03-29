@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.4] - 2026-03-28
+
+### Added
+- `Legion::Apollo::Local::Graph` — entity-relationship graph layer backed by local SQLite tables
+  - `create_entity`, `find_entity`, `find_entities_by_type`, `find_entities_by_name`, `update_entity`, `delete_entity` — full entity CRUD
+  - `create_relationship`, `find_relationships`, `delete_relationship` — directional typed edge CRUD
+  - `traverse(entity_id:, relation_type:, depth:, direction:)` — iterative BFS graph traversal with depth limiting (max 10), relation-type and direction (:outbound/:inbound) filtering, cycle-safe visited set, no duplicate nodes or edges in result
+  - `delete_entity` cascades and removes associated relationships
+  - `find_relationships` supports `direction: :both` via SQLite UNION
+- Migration `002_create_graph_tables` — `local_entities` and `local_relationships` tables with indexes and foreign keys
+- `Legion::Apollo::Local.graph` accessor returning `Legion::Apollo::Local::Graph`
+- `Legion::Apollo.graph_query(entity_id:, relation_type:, depth:, direction:)` — public API delegating to `Local::Graph.traverse`; returns `:local_not_started` when Local store is unavailable
+
 ## [0.3.3] - 2026-03-28
 
 ### Added
