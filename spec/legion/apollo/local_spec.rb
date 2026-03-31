@@ -154,7 +154,7 @@ RSpec.describe Legion::Apollo::Local do
     after { described_class.reset! }
 
     it 'ingests the partner seed file' do
-      seed_file = File.join(File.expand_path('../../../../data/self-knowledge', __dir__), '11-my-partner.md')
+      seed_file = File.join(File.expand_path('../../../data/self-knowledge', __dir__), '11-my-partner.md')
       skip 'partner seed file not yet created' unless File.exist?(seed_file)
 
       described_class.seed_self_knowledge
@@ -165,7 +165,7 @@ RSpec.describe Legion::Apollo::Local do
         rescue StandardError
           []
         end
-        parsed_tags.include?('my-partner')
+        parsed_tags.include?('11-my-partner')
       end
       expect(partner_entries).not_to be_empty
     end
