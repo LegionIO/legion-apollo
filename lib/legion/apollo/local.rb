@@ -64,7 +64,7 @@ module Legion
           { success: false, error: e.message }
         end
 
-        def upsert(content:, tags: [], **opts) # rubocop:disable Metrics/MethodLength
+        def upsert(content:, tags: [], **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
           return not_started_error unless started?
 
           sorted_tags = Array(tags).map(&:to_s).sort
@@ -319,7 +319,7 @@ module Legion
           default
         end
 
-        def update_upsert_entry(existing, content, tags_json, opts) # rubocop:disable Metrics/MethodLength
+        def update_upsert_entry(existing, content, tags_json, opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           new_hash = content_hash(content)
           now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
 

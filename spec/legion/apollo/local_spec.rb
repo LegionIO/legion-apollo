@@ -67,13 +67,13 @@ RSpec.describe Legion::Apollo::Local do
 
     before do
       local_db = db
-      stub_const('Legion::Data::Local', Module.new {
+      stub_const('Legion::Data::Local', Module.new do
         extend self
 
         define_method(:connected?) { true }
         define_method(:connection) { local_db }
         define_method(:register_migrations) { |**_| nil }
-      })
+      end)
       Sequel::Migrator.run(local_db, described_class::MIGRATION_PATH)
       described_class.start
     end
@@ -82,10 +82,10 @@ RSpec.describe Legion::Apollo::Local do
 
     it 'inserts a new entry when no matching tags exist' do
       result = described_class.upsert(
-        content: 'initial state',
-        tags: %w[social_graph reputation agent-123],
+        content:        'initial state',
+        tags:           %w[social_graph reputation agent-123],
         source_channel: 'gaia',
-        confidence: 0.9
+        confidence:     0.9
       )
       expect(result[:success]).to be true
       expect(result[:mode]).to eq(:inserted)
@@ -93,13 +93,13 @@ RSpec.describe Legion::Apollo::Local do
 
     it 'updates existing entry when matching tags found' do
       described_class.upsert(
-        content: 'initial state',
-        tags: %w[social_graph reputation agent-123],
+        content:        'initial state',
+        tags:           %w[social_graph reputation agent-123],
         source_channel: 'gaia'
       )
       result = described_class.upsert(
-        content: 'updated state',
-        tags: %w[social_graph reputation agent-123],
+        content:        'updated state',
+        tags:           %w[social_graph reputation agent-123],
         source_channel: 'gaia'
       )
       expect(result[:success]).to be true
@@ -140,13 +140,13 @@ RSpec.describe Legion::Apollo::Local do
 
     before do
       local_db = db
-      stub_const('Legion::Data::Local', Module.new {
+      stub_const('Legion::Data::Local', Module.new do
         extend self
 
         define_method(:connected?) { true }
         define_method(:connection) { local_db }
         define_method(:register_migrations) { |**_| nil }
-      })
+      end)
       Sequel::Migrator.run(local_db, described_class::MIGRATION_PATH)
       described_class.start
     end

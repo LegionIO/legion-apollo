@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.6] - 2026-03-31
+
+### Added
+- `Apollo::Local#upsert` — tag-based update-or-insert for tracker persistence; sorts tags for deterministic matching, rebuilds FTS5 on update
+- Partner seed file (`data/self-knowledge/11-my-partner.md`) — declares bond type and identity keys for GAIA self-knowledge
+
 ## [0.3.5] - 2026-03-28
 
 ### Fixed
