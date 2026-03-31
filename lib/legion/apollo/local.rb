@@ -64,6 +64,25 @@ module Legion
           { success: false, error: e.message }
         end
 
+        def upsert(content:, tags: [], **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+          return not_started_error unless started?
+
+          sorted_tags = Array(tags).map(&:to_s).sort
+          tag_json = Legion::JSON.dump(sorted_tags)
+          existing = db[:local_knowledge].where(tags: tag_json).first
+
+          if existing
+            update_upsert_entry(existing, content, tag_json, opts)
+          else
+            result = ingest(content: content, tags: sorted_tags, **opts)
+            result[:mode] = :inserted if result[:success] && result[:mode] != :deduplicated
+            result
+          end
+        rescue StandardError => e
+          Legion::Logging.warn "Apollo::Local upsert error: #{e.message}" if defined?(Legion::Logging)
+          { success: false, error: e.message }
+        end
+
         def query(text:, limit: nil, min_confidence: nil, tags: nil, **) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           return not_started_error unless started?
 
@@ -298,6 +317,30 @@ module Legion
           local[key] || default
         rescue StandardError
           default
+        end
+
+        def update_upsert_entry(existing, content, tags_json, opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+          new_hash = content_hash(content)
+          now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+
+          db[:local_knowledge].where(id: existing[:id]).update(
+            content:        content.to_s,
+            content_hash:   new_hash,
+            confidence:     opts.fetch(:confidence, existing[:confidence]),
+            source_channel: opts.fetch(:source_channel, existing[:source_channel]),
+            source_agent:   opts.fetch(:source_agent, existing[:source_agent]),
+            submitted_by:   opts.fetch(:submitted_by, existing[:submitted_by]),
+            updated_at:     now
+          )
+          rebuild_fts_entry(existing[:id], content.to_s, tags_json)
+          { success: true, mode: :updated, id: existing[:id] }
+        end
+
+        def rebuild_fts_entry(id, content, tags_json)
+          db.run("DELETE FROM local_knowledge_fts WHERE rowid = #{id}")
+          sync_fts(id, content, tags_json)
+        rescue StandardError
+          nil
         end
 
         def not_started_error

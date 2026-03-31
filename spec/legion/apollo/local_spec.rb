@@ -2,6 +2,7 @@
 
 require 'spec_helper'
 require 'sequel'
+require 'sequel/extensions/migration'
 
 RSpec.describe Legion::Apollo::Local do
   before do
@@ -58,6 +59,115 @@ RSpec.describe Legion::Apollo::Local do
         described_class.start
         expect(described_class.started?).to be false
       end
+    end
+  end
+
+  describe '#upsert' do
+    let(:db) { Sequel.sqlite }
+
+    before do
+      local_db = db
+      stub_const('Legion::Data::Local', Module.new do
+        extend self
+
+        define_method(:connected?) { true }
+        define_method(:connection) { local_db }
+        define_method(:register_migrations) { |**_| nil }
+      end)
+      Sequel::Migrator.run(local_db, described_class::MIGRATION_PATH)
+      described_class.start
+    end
+
+    after { described_class.reset! }
+
+    it 'inserts a new entry when no matching tags exist' do
+      result = described_class.upsert(
+        content:        'initial state',
+        tags:           %w[social_graph reputation agent-123],
+        source_channel: 'gaia',
+        confidence:     0.9
+      )
+      expect(result[:success]).to be true
+      expect(result[:mode]).to eq(:inserted)
+    end
+
+    it 'updates existing entry when matching tags found' do
+      described_class.upsert(
+        content:        'initial state',
+        tags:           %w[social_graph reputation agent-123],
+        source_channel: 'gaia'
+      )
+      result = described_class.upsert(
+        content:        'updated state',
+        tags:           %w[social_graph reputation agent-123],
+        source_channel: 'gaia'
+      )
+      expect(result[:success]).to be true
+      expect(result[:mode]).to eq(:updated)
+
+      query_result = described_class.query(text: 'updated state', tags: %w[social_graph reputation agent-123])
+      expect(query_result[:results].size).to eq(1)
+      expect(query_result[:results].first[:content]).to eq('updated state')
+    end
+
+    it 'matches tags exactly — different tags create new entry' do
+      described_class.upsert(content: 'A', tags: %w[social_graph reputation agent-123])
+      described_class.upsert(content: 'B', tags: %w[social_graph reputation agent-456])
+
+      result_a = described_class.query(text: '', tags: %w[agent-123])
+      result_b = described_class.query(text: '', tags: %w[agent-456])
+      expect(result_a[:results].size).to eq(1)
+      expect(result_a[:results].first[:content]).to eq('A')
+      expect(result_b[:results].size).to eq(1)
+      expect(result_b[:results].first[:content]).to eq('B')
+    end
+
+    it 'returns not_started when store is not running' do
+      described_class.reset!
+      result = described_class.upsert(content: 'x', tags: ['a'])
+      expect(result[:success]).to be false
+    end
+
+    it 'handles tag order normalization' do
+      described_class.upsert(content: 'first', tags: %w[b a c])
+      result = described_class.upsert(content: 'second', tags: %w[c a b])
+      expect(result[:mode]).to eq(:updated)
+    end
+  end
+
+  describe '#seed_self_knowledge' do
+    let(:db) { Sequel.sqlite }
+
+    before do
+      local_db = db
+      stub_const('Legion::Data::Local', Module.new do
+        extend self
+
+        define_method(:connected?) { true }
+        define_method(:connection) { local_db }
+        define_method(:register_migrations) { |**_| nil }
+      end)
+      Sequel::Migrator.run(local_db, described_class::MIGRATION_PATH)
+      described_class.start
+    end
+
+    after { described_class.reset! }
+
+    it 'ingests the partner seed file' do
+      seed_file = File.join(File.expand_path('../../../data/self-knowledge', __dir__), '11-my-partner.md')
+      skip 'partner seed file not yet created' unless File.exist?(seed_file)
+
+      described_class.seed_self_knowledge
+      result = described_class.query(text: 'partner', tags: ['self-knowledge'])
+      partner_entries = result[:results].select do |r|
+        parsed_tags = begin
+          Legion::JSON.parse(r[:tags])
+        rescue StandardError
+          []
+        end
+        parsed_tags.include?('11-my-partner')
+      end
+      expect(partner_entries).not_to be_empty
     end
   end
 end
