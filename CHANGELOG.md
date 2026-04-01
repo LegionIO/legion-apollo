@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- `Apollo::Local.promote_to_global(tags:, min_confidence:)` — promotes local entries to Apollo Global
+- `Apollo::Local.query_by_tags(tags:, limit:)` — tag-only query (bypasses FTS5)
+- `Apollo::Local.hydrate_from_global` — boots local store from global partner data with 0.9 confidence discount
+- Boot hook: auto-hydrates partner data from global on first start
+
 ## [0.3.6] - 2026-03-31
 
 ### Added
