@@ -131,6 +131,86 @@ module Legion
           @seeded == true
         end
 
+        def query_by_tags(tags:, limit: 50) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+          return { success: false, error: :not_started } unless started?
+
+          candidates = db[:local_knowledge]
+                       .where { expires_at > Time.now.utc.iso8601 }
+                       .limit(limit)
+                       .all
+
+          results = candidates.select do |row|
+            row_tags = parse_tags(row[:tags])
+            tags.all? { |t| row_tags.include?(t) }
+          end
+
+          { success: true, results: results, count: results.size }
+        rescue StandardError => e
+          { success: false, error: e.message }
+        end
+
+        def promote_to_global(tags:, min_confidence: 0.6) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+          return { success: false, error: :not_started } unless started?
+
+          entries = query_by_tags(tags: tags)
+          return { success: true, promoted: 0 } unless entries[:success] && entries[:results]&.any?
+
+          promoted = 0
+          entries[:results].each do |entry|
+            next if entry[:confidence].to_f < min_confidence
+
+            entry_tags = parse_tags(entry[:tags])
+            hostname = ::Socket.gethostname rescue 'unknown' # rubocop:disable Style/RescueModifier
+            result = Legion::Apollo.ingest(
+              content:        entry[:content],
+              tags:           entry_tags + ['promoted_from_local'],
+              source_channel: 'local_promotion',
+              submitted_by:   "node:#{hostname}",
+              confidence:     entry[:confidence],
+              scope:          :global
+            )
+            promoted += 1 if result[:success]
+          end
+
+          { success: true, promoted: promoted }
+        rescue StandardError => e
+          { success: false, error: e.message }
+        end
+
+        def hydrate_from_global # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+          return { success: false, error: :not_started } unless started?
+
+          local_check = query_by_tags(tags: ['partner'])
+          return { success: true, skipped: :local_data_exists } if local_check[:success] && local_check[:results]&.any?
+
+          unless Legion::Apollo.transport_available? || Legion::Apollo.data_available?
+            return { success: true, skipped: :global_unavailable }
+          end
+
+          global_entries = Legion::Apollo.retrieve(text: 'partner bond', scope: :global, limit: 20)
+          unless global_entries[:success] && global_entries[:results]&.any?
+            return { success: true, skipped: :no_global_data }
+          end
+
+          hydrated = 0
+          global_entries[:results].each do |entry|
+            entry_tags = entry[:tags].is_a?(Array) ? entry[:tags] : []
+            clean_tags = entry_tags.reject { |t| t == 'promoted_from_local' } + ['hydrated_from_global']
+
+            result = ingest(
+              content:        entry[:content],
+              tags:           clean_tags,
+              confidence:     ((entry[:confidence] || 0.5) * 0.9).round(10),
+              source_channel: 'global_hydration'
+            )
+            hydrated += 1 if result[:success]
+          end
+
+          { success: true, hydrated: hydrated }
+        rescue StandardError => e
+          { success: false, error: e.message }
+        end
+
         private
 
         def self_knowledge_files
