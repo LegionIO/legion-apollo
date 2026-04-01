@@ -27,6 +27,7 @@ module Legion
         register_routes
         Legion::Apollo::Local.start
         seed_self_knowledge
+        Legion::Apollo::Local.hydrate_from_global if Legion::Apollo::Local.started?
       end
 
       def shutdown
