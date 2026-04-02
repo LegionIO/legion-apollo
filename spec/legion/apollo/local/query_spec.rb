@@ -38,6 +38,13 @@ RSpec.describe 'Apollo::Local query' do
     expect(result[:results].first[:content]).to include('RabbitMQ')
   end
 
+  it 'flattens structured text blocks before FTS search and reranking' do
+    result = Legion::Apollo::Local.query(text: [{ type: 'text', text: 'RabbitMQ' }])
+    expect(result[:success]).to be true
+    expect(result[:results]).not_to be_empty
+    expect(result[:results].first[:content]).to include('RabbitMQ')
+  end
+
   it 'respects limit' do
     result = Legion::Apollo::Local.query(text: 'messaging', limit: 1)
     expect(result[:results].size).to be <= 1
