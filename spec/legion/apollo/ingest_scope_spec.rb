@@ -18,6 +18,14 @@ RSpec.describe Legion::Apollo do
         expect(result[:mode]).to eq(:local)
         expect(Legion::Apollo::Local).to have_received(:ingest).with(hash_including(content: 'test fact'))
       end
+
+      it 'normalizes tags before delegating to Local' do
+        described_class.ingest(content: 'test fact', tags: ['Team Bond', 'team bond'], scope: :local)
+
+        expect(Legion::Apollo::Local).to have_received(:ingest).with(
+          hash_including(tags: ['team_bond'])
+        )
+      end
     end
 
     context 'when Local is not started' do

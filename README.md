@@ -46,6 +46,7 @@ Features:
 ```json
 {
   "apollo": {
+    "enabled": true,
     "default_limit": 5,
     "min_confidence": 0.3,
     "max_tags": 20,

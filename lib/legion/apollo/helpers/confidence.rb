@@ -1,11 +1,15 @@
 # frozen_string_literal: true
 
+require 'legion/logging'
+
 module Legion
   module Apollo
     module Helpers
       # Confidence constants and predicate helpers for Apollo knowledge entries.
       # DB-dependent methods live in lex-apollo; only pure-function logic here.
       module Confidence
+        extend Legion::Logging::Helper
+
         INITIAL_CONFIDENCE     = 0.5
         CORROBORATION_BOOST    = 0.15
         CONTRADICTION_PENALTY  = 0.20
@@ -43,7 +47,8 @@ module Legion
           return default unless defined?(Legion::Settings) && !Legion::Settings[:apollo].nil?
 
           Legion::Settings[:apollo][key] || default
-        rescue StandardError
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'apollo.helpers.confidence.apollo_setting', key: key)
           default
         end
       end

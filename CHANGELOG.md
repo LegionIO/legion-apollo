@@ -1,6 +1,24 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0] - 2026-04-02
+
+### Changed
+- Adopt `Legion::Logging::Helper` across the Apollo core, local store, graph layer, message publishers, and helper modules
+- Require `legion-logging >= 1.5.0` for structured helper-based logging support
+- Remove unused top-level Apollo defaults for transport mode and timeout settings
+
+### Fixed
+- Start addressing Apollo local lifecycle, merged routing, hydration contract, and route/runtime drift for the 0.4.x line
+- `Apollo.shutdown` now shuts down `Apollo::Local`, and `Apollo::Local.upsert` refreshes expiry and embedding metadata for updated rows
+- `Apollo::Local.hydrate_from_global` now accepts Apollo's `entries` response shape, and `query(scope: :all)` falls back to async global transport when no synchronous backends are available
+- `apollo.enabled` now gates startup, `Apollo::Local.query_by_tags` filters in SQLite before applying limits, and message publish behavior has direct spec coverage
+- Blank local queries now bypass invalid FTS `MATCH ''` calls while still supporting tag-filtered lookups
+- REST query and ingest routes now delegate to `Legion::Apollo`, return `202` for async transport fallback, and stop reporting failed ingests as `201 Created`
+- Apollo and Apollo::Local lifecycle, seeding, and hydration flows are now serialized, while local ingest/upsert keeps base rows and FTS updates inside the same transaction and treats duplicate content races as deterministic deduplication
+- Apollo and Apollo::Local now normalize tag inputs consistently for direct Ruby callers, so ingest, query, and upsert semantics match the route-layer tag contract
+- Apollo graph relationships now reject invalid relation types, deduplicate duplicate semantic edges with a unique index, delete entities transactionally, and traverse larger graphs with batched frontier expansion
+
+## [0.3.7] - 2026-03-31
 
 ### Added
 - `Apollo::Local.promote_to_global(tags:, min_confidence:)` — promotes local entries to Apollo Global

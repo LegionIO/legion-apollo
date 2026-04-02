@@ -35,7 +35,7 @@ RSpec.describe Legion::Apollo::Local do
         allow(Legion::Apollo).to receive(:data_available?).and_return(false)
         allow(Legion::Apollo).to receive(:retrieve).and_return({
                                                                  success: true,
-                                                                 results: [
+                                                                 entries: [
                                                                    { content: 'partner bond data',
 tags: %w[bond attachment promoted_from_local], confidence: 0.8 }
                                                                  ]
@@ -60,6 +60,25 @@ tags: %w[bond attachment promoted_from_local], confidence: 0.8 }
           expect(args[:tags]).not_to include('promoted_from_local')
           expect(args[:tags]).to include('hydrated_from_global')
         end
+      end
+
+      it 'serializes concurrent hydration requests' do
+        hydrated = false
+        allow(described_class).to receive(:query_by_tags) do
+          { success: true, results: hydrated ? [{ content: 'existing partner data' }] : [] }
+        end
+        allow(described_class).to receive(:ingest) do
+          sleep 0.05
+          hydrated = true
+          { success: true }
+        end
+
+        threads = Array.new(2) { Thread.new { described_class.hydrate_from_global } }
+        results = threads.map(&:value)
+
+        expect(Legion::Apollo).to have_received(:retrieve).once
+        expect(results).to include(include(success: true, hydrated: 1))
+        expect(results).to include(include(success: true, skipped: :local_data_exists))
       end
     end
 

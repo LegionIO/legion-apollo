@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require 'sequel'
+require 'sequel/extensions/migration'
+
 RSpec.describe Legion::Apollo::Local do
   describe '.query_by_tags' do
     context 'when not started' do
@@ -13,34 +16,71 @@ RSpec.describe Legion::Apollo::Local do
     end
 
     context 'when started' do
-      let(:mock_db) { double('db') }
-      let(:mock_dataset) { double('dataset') }
+      let(:db) { Sequel.sqlite }
 
       before do
+        local_db = db
         stub_const('Legion::Data::Local', Module.new do
-          def self.connection; end
+          extend self
+
+          define_method(:connected?) { true }
+          define_method(:connection) { local_db }
+          define_method(:register_migrations) { |**_| nil }
         end)
         allow(described_class).to receive(:started?).and_return(true)
-        allow(Legion::Data::Local).to receive(:connection).and_return(mock_db)
-        allow(mock_db).to receive(:[]).with(:local_knowledge).and_return(mock_dataset)
-        allow(mock_dataset).to receive(:where).and_return(mock_dataset)
-        allow(mock_dataset).to receive(:limit).and_return(mock_dataset)
-        allow(mock_dataset).to receive(:all).and_return([
-                                                          { id: 1, content: 'test',
-tags: '["bond","calibration","weights"]', confidence: 0.8 }
-                                                        ])
+        Sequel::Migrator.run(local_db, described_class::MIGRATION_PATH)
+
+        now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+        expires_at = (Time.now.utc + 3600).strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+
+        db[:local_knowledge].insert(
+          content:      'unrelated first row',
+          content_hash: 'hash-unrelated',
+          tags:         '["other"]',
+          confidence:   0.3,
+          expires_at:   expires_at,
+          created_at:   now,
+          updated_at:   now
+        )
+        db[:local_knowledge].insert(
+          content:      'matching row one',
+          content_hash: 'hash-match-1',
+          tags:         '["bond","calibration","weights"]',
+          confidence:   0.8,
+          expires_at:   expires_at,
+          created_at:   now,
+          updated_at:   now
+        )
+        db[:local_knowledge].insert(
+          content:      'matching row two',
+          content_hash: 'hash-match-2',
+          tags:         '["bond","calibration","second"]',
+          confidence:   0.7,
+          expires_at:   expires_at,
+          created_at:   now,
+          updated_at:   now
+        )
       end
 
       it 'filters by tag intersection' do
         result = described_class.query_by_tags(tags: %w[bond calibration])
         expect(result[:success]).to be true
-        expect(result[:results].size).to eq(1)
+        expect(result[:results].size).to eq(2)
       end
 
       it 'excludes entries missing requested tags' do
         result = described_class.query_by_tags(tags: %w[bond calibration nonexistent])
         expect(result[:success]).to be true
         expect(result[:results]).to be_empty
+      end
+
+      it 'applies limit after filtering matching tags' do
+        result = described_class.query_by_tags(tags: %w[bond calibration], limit: 1)
+
+        expect(result[:success]).to be true
+        expect(result[:results].size).to eq(1)
+        parsed_tags = Legion::JSON.parse(result[:results].first[:tags])
+        expect(parsed_tags).to include('bond', 'calibration')
       end
     end
   end

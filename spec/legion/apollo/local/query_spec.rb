@@ -38,6 +38,13 @@ RSpec.describe 'Apollo::Local query' do
     expect(result[:results].first[:content]).to include('RabbitMQ')
   end
 
+  it 'flattens structured text blocks before FTS search and reranking' do
+    result = Legion::Apollo::Local.query(text: [{ type: 'text', text: 'RabbitMQ' }])
+    expect(result[:success]).to be true
+    expect(result[:results]).not_to be_empty
+    expect(result[:results].first[:content]).to include('RabbitMQ')
+  end
+
   it 'respects limit' do
     result = Legion::Apollo::Local.query(text: 'messaging', limit: 1)
     expect(result[:results].size).to be <= 1
@@ -47,6 +54,23 @@ RSpec.describe 'Apollo::Local query' do
     result = Legion::Apollo::Local.query(text: 'clustering', tags: %w[redis])
     matching = result[:results].select { |r| r[:content].include?('RabbitMQ') }
     expect(matching).to be_empty
+  end
+
+  it 'supports blank text queries when tags narrow the result set' do
+    result = Legion::Apollo::Local.query(text: '', tags: %w[rabbitmq])
+
+    expect(result[:success]).to be true
+    expect(result[:results]).not_to be_empty
+    expect(result[:results].map { |entry| entry[:content] }).to include('RabbitMQ clustering works by mirroring queues')
+  end
+
+  it 'normalizes filter tags for direct callers' do
+    Legion::Apollo::Local.ingest(content: 'Bond state change', tags: ['Team Bond'])
+
+    result = Legion::Apollo::Local.query(text: 'Bond', tags: ['team bond'])
+
+    expect(result[:success]).to be true
+    expect(result[:results].map { |entry| entry[:content] }).to include('Bond state change')
   end
 
   it 'filters by min_confidence' do

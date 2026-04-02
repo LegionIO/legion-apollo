@@ -169,6 +169,21 @@ RSpec.describe Legion::Apollo::Local::Graph do
       expect(result[:success]).to be false
       expect(result[:error]).to eq(:not_found)
     end
+
+    it 'rolls back relationship deletes when entity deletion fails' do
+      src = make_entity(name: 'src')[:id]
+      tgt = make_entity(name: 'tgt')[:id]
+      make_rel(src, tgt)
+
+      allow(described_class).to receive(:delete_entity_row).and_raise(Sequel::Error, 'delete failed')
+
+      result = described_class.delete_entity(id: src)
+
+      expect(result[:success]).to be false
+      expect(result[:error]).to eq('delete failed')
+      expect(db[:local_entities].where(id: src).count).to eq(1)
+      expect(db[:local_relationships].where(source_entity_id: src).count).to eq(1)
+    end
   end
 
   # ============================================================
@@ -195,6 +210,25 @@ RSpec.describe Legion::Apollo::Local::Graph do
       row = db[:local_relationships].where(id: id).first
       expect(row[:source_entity_id]).to eq(src)
       expect(row[:target_entity_id]).to eq(tgt)
+    end
+
+    it 'rejects invalid relation types' do
+      result = make_rel(src, tgt, type: 'BROKEN_EDGE')
+
+      expect(result[:success]).to be false
+      expect(result[:error]).to eq(:invalid_relation_type)
+      expect(db[:local_relationships].count).to eq(0)
+    end
+
+    it 'deduplicates duplicate semantic edges' do
+      first = make_rel(src, tgt, type: 'DEPENDS_ON')
+      second = make_rel(src, tgt, type: 'depends_on')
+
+      expect(first[:success]).to be true
+      expect(second[:success]).to be true
+      expect(second[:mode]).to eq(:deduplicated)
+      expect(second[:id]).to eq(first[:id])
+      expect(db[:local_relationships].count).to eq(1)
     end
   end
 
@@ -348,6 +382,23 @@ RSpec.describe Legion::Apollo::Local::Graph do
       result = described_class.traverse(entity_id: id_a, depth: 1)
       edge = result[:edges].first
       expect(edge).to include(:source_entity_id, :target_entity_id, :relation_type)
+    end
+
+    it 'batches frontier expansion for larger graphs' do
+      previous_id = id_d
+      12.times do |index|
+        next_id = make_entity(name: "N#{index}")[:id]
+        make_rel(previous_id, next_id, type: 'DEPENDS_ON')
+        previous_id = next_id
+      end
+
+      allow(described_class).to receive(:fetch_frontier_edges).and_call_original
+
+      result = described_class.traverse(entity_id: id_a, depth: 10)
+
+      expect(result[:success]).to be true
+      expect(result[:count]).to eq(11)
+      expect(described_class).to have_received(:fetch_frontier_edges).exactly(10).times
     end
 
     context 'with no outbound edges' do

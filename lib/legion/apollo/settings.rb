@@ -7,9 +7,6 @@ module Legion
       def self.default
         {
           enabled:        true,
-          transport_mode: :auto,
-          query_timeout:  5,
-          ingest_timeout: 10,
           max_tags:       20,
           default_limit:  5,
           min_confidence: 0.3,

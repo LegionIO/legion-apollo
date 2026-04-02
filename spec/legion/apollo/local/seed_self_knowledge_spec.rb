@@ -89,6 +89,20 @@ RSpec.describe Legion::Apollo::Local, '.seed_self_knowledge' do
       expect(local_db[:local_knowledge].count).to eq(count_after_first)
     end
 
+    it 'serializes concurrent seed requests' do
+      allow(described_class).to receive(:self_knowledge_files).and_return(['seed.md'])
+      allow(described_class).to receive(:seed_files) do |_files|
+        sleep 0.05
+        1
+      end
+
+      threads = Array.new(2) { Thread.new { described_class.seed_self_knowledge } }
+      threads.each(&:join)
+
+      expect(described_class).to have_received(:seed_files).once
+      expect(described_class.seeded?).to be true
+    end
+
     it 'deduplicates content by hash' do
       described_class.seed_self_knowledge
       count = local_db[:local_knowledge].count
