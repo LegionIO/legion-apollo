@@ -38,6 +38,34 @@ RSpec.describe Legion::Apollo do
         expect(result).to eq({ success: false, error: :no_path_available })
       end
     end
+
+    context 'when started and a co-located reader is available' do
+      let(:knowledge_runner) do
+        Module.new do
+          def self.handle_query(**); end
+        end
+      end
+
+      before do
+        described_class.start
+        allow(described_class).to receive(:co_located_reader?).and_return(true)
+        stub_const('Legion::Extensions', Module.new)
+        stub_const('Legion::Extensions::Apollo', Module.new)
+        stub_const('Legion::Extensions::Apollo::Runners', Module.new)
+        stub_const('Legion::Extensions::Apollo::Runners::Knowledge', knowledge_runner)
+        allow(knowledge_runner).to receive(:handle_query).and_return(
+          { success: true, entries: [], count: 0 }
+        )
+      end
+
+      it 'normalizes text into query for the co-located runner' do
+        described_class.query(text: 'test')
+
+        expect(knowledge_runner).to have_received(:handle_query).with(
+          hash_including(text: 'test', query: 'test')
+        )
+      end
+    end
   end
 
   describe '.ingest' do

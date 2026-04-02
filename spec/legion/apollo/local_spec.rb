@@ -155,8 +155,6 @@ RSpec.describe Legion::Apollo::Local do
 
     it 'ingests the partner seed file' do
       seed_file = File.join(File.expand_path('../../../data/self-knowledge', __dir__), '11-my-partner.md')
-      skip 'partner seed file not yet created' unless File.exist?(seed_file)
-
       described_class.seed_self_knowledge
       result = described_class.query(text: 'partner', tags: ['self-knowledge'])
       partner_entries = result[:results].select do |r|
