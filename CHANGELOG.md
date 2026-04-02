@@ -1,6 +1,15 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0] - 2026-04-02
+
+### Changed
+- Adopt `Legion::Logging::Helper` across the Apollo core, local store, graph layer, message publishers, and helper modules
+- Require `legion-logging >= 1.4.3` for structured helper-based logging support
+
+### Fixed
+- Start addressing Apollo local lifecycle, merged routing, hydration contract, and route/runtime drift for the 0.4.x line
+
+## [0.3.7] - 2026-03-31
 
 ### Added
 - `Apollo::Local.promote_to_global(tags:, min_confidence:)` — promotes local entries to Apollo Global
