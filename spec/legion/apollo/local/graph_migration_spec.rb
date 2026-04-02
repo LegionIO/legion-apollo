@@ -63,5 +63,27 @@ RSpec.describe 'graph tables migration' do
       )
       expect(rel_id).to be_a(Integer)
     end
+
+    it 'prevents duplicate semantic relationships' do
+      now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+      src = db[:local_entities].insert(entity_type: 'svc', name: 'src', attributes: '{}',
+                                       created_at: now, updated_at: now)
+      tgt = db[:local_entities].insert(entity_type: 'svc', name: 'tgt', attributes: '{}',
+                                       created_at: now, updated_at: now)
+
+      db[:local_relationships].insert(
+        source_entity_id: src, target_entity_id: tgt,
+        relation_type: 'DEPENDS_ON', attributes: '{}',
+        created_at: now, updated_at: now
+      )
+
+      expect do
+        db[:local_relationships].insert(
+          source_entity_id: src, target_entity_id: tgt,
+          relation_type: 'DEPENDS_ON', attributes: '{}',
+          created_at: now, updated_at: now
+        )
+      end.to raise_error(Sequel::UniqueConstraintViolation)
+    end
   end
 end

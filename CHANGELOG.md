@@ -16,6 +16,7 @@
 - REST query and ingest routes now delegate to `Legion::Apollo`, return `202` for async transport fallback, and stop reporting failed ingests as `201 Created`
 - Apollo and Apollo::Local lifecycle, seeding, and hydration flows are now serialized, while local ingest/upsert keeps base rows and FTS updates inside the same transaction and treats duplicate content races as deterministic deduplication
 - Apollo and Apollo::Local now normalize tag inputs consistently for direct Ruby callers, so ingest, query, and upsert semantics match the route-layer tag contract
+- Apollo graph relationships now reject invalid relation types, deduplicate duplicate semantic edges with a unique index, delete entities transactionally, and traverse larger graphs with batched frontier expansion
 
 ## [0.3.7] - 2026-03-31
 

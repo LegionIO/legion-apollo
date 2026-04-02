@@ -9,7 +9,7 @@ module Legion
       # Entity-relationship graph layer backed by local SQLite tables.
       # Entities are schema-flexible (type + name + domain + JSON attributes).
       # Relationships are directional typed edges between two entities.
-      # Graph traversal uses recursive SQLite CTEs (max_depth enforced).
+      # Graph traversal expands one frontier batch per depth to avoid per-node queries.
       module Graph # rubocop:disable Metrics/ModuleLength
         VALID_RELATION_TYPES = %w[AFFECTS OWNED_BY DEPENDS_ON RELATED_TO].freeze
 
@@ -20,14 +20,16 @@ module Legion
 
           def create_entity(type:, name:, domain: nil, attributes: {}) # rubocop:disable Metrics/MethodLength
             now = timestamp
-            id = db[:local_entities].insert(
-              entity_type: type.to_s,
-              name:        name.to_s,
-              domain:      domain&.to_s,
-              attributes:  encode(attributes),
-              created_at:  now,
-              updated_at:  now
-            )
+            id = db.transaction do
+              db[:local_entities].insert(
+                entity_type: type.to_s,
+                name:        name.to_s,
+                domain:      domain&.to_s,
+                attributes:  encode(attributes),
+                created_at:  now,
+                updated_at:  now
+              )
+            end
             log.info { "Apollo::Local::Graph created entity id=#{id} type=#{type} name=#{name}" }
             { success: true, id: id }
           rescue Sequel::Error => e
@@ -104,14 +106,12 @@ module Legion
             { success: false, error: e.message }
           end
 
-          def delete_entity(id:) # rubocop:disable Metrics/AbcSize
-            db[:local_relationships].where(source_entity_id: id).delete
-            db[:local_relationships].where(target_entity_id: id).delete
-            count = db[:local_entities].where(id: id).delete
-            return { success: false, error: :not_found } if count.zero?
+          def delete_entity(id:)
+            result = delete_entity_transaction(id)
+            return result unless result[:success]
 
             log.info { "Apollo::Local::Graph deleted entity id=#{id}" }
-            { success: true, id: id }
+            result
           rescue Sequel::Error => e
             handle_exception(e, level: :error, operation: 'apollo.local.graph.delete_entity', entity_id: id)
             { success: false, error: e.message }
@@ -120,20 +120,31 @@ module Legion
           # --- Relationship CRUD ---
 
           def create_relationship(source_id:, target_id:, relation_type:, attributes: {}) # rubocop:disable Metrics/MethodLength
-            now = timestamp
-            id = db[:local_relationships].insert(
-              source_entity_id: source_id,
-              target_entity_id: target_id,
-              relation_type:    relation_type.to_s.upcase,
-              attributes:       encode(attributes),
-              created_at:       now,
-              updated_at:       now
-            )
+            normalized_relation_type = normalize_relation_type(relation_type)
+            return invalid_relation_type_error(relation_type) unless normalized_relation_type
+
+            existing = existing_relationship(source_id, target_id, normalized_relation_type)
+            return deduplicated_relationship(existing) if existing
+
+            id = insert_relationship(source_id, target_id, normalized_relation_type, attributes)
             log.info do
               "Apollo::Local::Graph created relationship id=#{id} source_id=#{source_id} " \
-                "target_id=#{target_id} relation_type=#{relation_type.to_s.upcase}"
+                "target_id=#{target_id} relation_type=#{normalized_relation_type}"
             end
             { success: true, id: id }
+          rescue Sequel::UniqueConstraintViolation => e
+            duplicate = handle_duplicate_relationship(source_id, target_id, normalized_relation_type)
+            return duplicate if duplicate
+
+            handle_exception(
+              e,
+              level:         :error,
+              operation:     'apollo.local.graph.create_relationship',
+              source_id:     source_id,
+              target_id:     target_id,
+              relation_type: normalized_relation_type
+            )
+            { success: false, error: e.message }
           rescue Sequel::Error => e
             handle_exception(
               e,
@@ -172,7 +183,7 @@ module Legion
           end
 
           def delete_relationship(id:)
-            count = db[:local_relationships].where(id: id).delete
+            count = db.transaction { db[:local_relationships].where(id: id).delete }
             return { success: false, error: :not_found } if count.zero?
 
             log.info { "Apollo::Local::Graph deleted relationship id=#{id}" }
@@ -185,7 +196,8 @@ module Legion
           # --- Graph Traversal ---
 
           # Traverse from an entity following edges of the given relation_type.
-          # Returns all reachable entities within max_depth hops using a recursive CTE.
+          # Returns all reachable entities within max_depth hops by expanding one
+          # frontier batch per depth level instead of querying neighbors per node.
           #
           # @param entity_id [Integer] starting entity id
           # @param relation_type [String, nil] filter by edge type (nil = any)
@@ -220,45 +232,121 @@ module Legion
 
           private
 
-          def run_traversal(start_id, rel_filter, max_depth, direction) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
-            visited   = Set.new
+          def run_traversal(start_id, rel_filter, max_depth, direction) # rubocop:disable Metrics/MethodLength
+            visited   = Set.new([start_id])
             frontier  = [start_id]
             edge_rows = []
 
-            # Run max_depth + 1 passes so that depth=1 means "start node + its direct neighbors".
-            # Pass 0 visits the start node and pushes its neighbors into the next frontier.
-            # Passes 1..max_depth each follow one more hop.
-            (max_depth + 1).times do
+            max_depth.times do
               break if frontier.empty?
 
-              next_frontier = []
-              frontier.each do |current_id|
-                next if visited.include?(current_id)
-
-                visited.add(current_id)
-                neighbors, edges = fetch_neighbors(current_id, rel_filter, direction)
-                edge_rows.concat(edges)
-                neighbors.each { |n| next_frontier << n unless visited.include?(n) }
-              end
-              frontier = next_frontier
+              rows = fetch_frontier_edges(frontier, rel_filter, direction)
+              edge_rows.concat(rows)
+              frontier = next_frontier_ids(rows, direction).reject { |neighbor_id| visited.include?(neighbor_id) }.uniq
+              frontier.each { |neighbor_id| visited.add(neighbor_id) }
             end
 
             [visited.to_a, edge_rows.uniq { |r| r[:id] }]
           end
 
-          def fetch_neighbors(entity_id, rel_filter, direction)
+          def fetch_frontier_edges(frontier, rel_filter, direction)
             ds = case direction
-                 when :inbound then db[:local_relationships].where(target_entity_id: entity_id)
-                 else               db[:local_relationships].where(source_entity_id: entity_id)
+                 when :inbound then db[:local_relationships].where(target_entity_id: frontier)
+                 else               db[:local_relationships].where(source_entity_id: frontier)
                  end
             ds = ds.where(relation_type: rel_filter) if rel_filter
-            rows = ds.all
+            ds.all
+          end
 
-            neighbor_ids = rows.map do |r|
-              direction == :inbound ? r[:source_entity_id] : r[:target_entity_id]
+          def next_frontier_ids(rows, direction)
+            rows.map do |row|
+              direction == :inbound ? row[:source_entity_id] : row[:target_entity_id]
             end
+          end
 
-            [neighbor_ids, rows]
+          def normalize_relation_type(relation_type)
+            normalized = relation_type.to_s.upcase
+            return normalized if VALID_RELATION_TYPES.include?(normalized)
+
+            nil
+          end
+
+          def invalid_relation_type_error(relation_type)
+            log.warn { "Apollo::Local::Graph rejected invalid relation_type=#{relation_type}" }
+            { success: false, error: :invalid_relation_type }
+          end
+
+          def existing_relationship(source_id, target_id, relation_type)
+            db[:local_relationships].where(
+              source_entity_id: source_id,
+              target_entity_id: target_id,
+              relation_type:    relation_type
+            ).first
+          end
+
+          def deduplicated_relationship(existing)
+            log.info do
+              "Apollo::Local::Graph deduplicated relationship id=#{existing[:id]} " \
+                "relation_type=#{existing[:relation_type]}"
+            end
+            { success: true, id: existing[:id], mode: :deduplicated }
+          end
+
+          def insert_relationship(source_id, target_id, relation_type, attributes)
+            db.transaction do
+              db[:local_relationships].insert(relationship_row(source_id, target_id, relation_type, attributes))
+            end
+          end
+
+          def relationship_row(source_id, target_id, relation_type, attributes)
+            now = timestamp
+            {
+              source_entity_id: source_id,
+              target_entity_id: target_id,
+              relation_type:    relation_type,
+              attributes:       encode(attributes),
+              created_at:       now,
+              updated_at:       now
+            }
+          end
+
+          def handle_duplicate_relationship(source_id, target_id, relation_type)
+            existing = existing_relationship(source_id, target_id, relation_type)
+            return deduplicated_relationship(existing) if existing
+
+            nil
+          end
+
+          def delete_entity_transaction(id)
+            result = nil
+            db.transaction do
+              result = existing_entity?(id) ? delete_existing_entity(id) : missing_entity_result
+              raise Sequel::Rollback unless result[:success]
+            end
+            result
+          end
+
+          def existing_entity?(id)
+            !db[:local_entities].where(id: id).first.nil?
+          end
+
+          def delete_existing_entity(id)
+            delete_entity_relationships(id)
+            delete_entity_row(id)
+            { success: true, id: id }
+          end
+
+          def missing_entity_result
+            { success: false, error: :not_found }
+          end
+
+          def delete_entity_relationships(id)
+            db[:local_relationships].where(source_entity_id: id).delete
+            db[:local_relationships].where(target_entity_id: id).delete
+          end
+
+          def delete_entity_row(id)
+            db[:local_entities].where(id: id).delete
           end
 
           def relationship_both_directions(entity_id)
