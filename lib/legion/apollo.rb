@@ -14,39 +14,46 @@ module Legion
   # RabbitMQ transport, and degrades gracefully when neither is present.
   # Supports scope: :global (default), :local (SQLite only), :all (merged).
   module Apollo # rubocop:disable Metrics/ModuleLength
+    LIFECYCLE_MUTEX = Mutex.new
+
     class << self # rubocop:disable Metrics/ClassLength
       include Legion::Logging::Helper
 
       def start # rubocop:disable Metrics/MethodLength
-        return if @started
+        LIFECYCLE_MUTEX.synchronize do
+          return if @started
 
-        merge_settings
-        unless apollo_enabled?
-          log.info 'Apollo start skipped because apollo.enabled is false'
-          return
+          merge_settings
+          unless apollo_enabled?
+            log.info 'Apollo start skipped because apollo.enabled is false'
+            return
+          end
+
+          detect_transport
+          detect_data
+          register_routes
+          Legion::Apollo::Local.start
+
+          @started = true
+          log.info 'Legion::Apollo started'
+
+          seed_self_knowledge
+          Legion::Apollo::Local.hydrate_from_global if Legion::Apollo::Local.started?
         end
-
-        detect_transport
-        detect_data
-
-        @started = true
-        log.info 'Legion::Apollo started'
-
-        register_routes
-        Legion::Apollo::Local.start
-        seed_self_knowledge
-        Legion::Apollo::Local.hydrate_from_global if Legion::Apollo::Local.started?
+      rescue StandardError => e
+        handle_exception(e, level: :error, operation: 'apollo.start')
+        clear_state
       end
 
       def shutdown
-        Legion::Apollo::Local.shutdown if defined?(Legion::Apollo::Local) && Legion::Apollo::Local.started?
-        log.info 'Legion::Apollo shutdown'
+        LIFECYCLE_MUTEX.synchronize do
+          Legion::Apollo::Local.shutdown if defined?(Legion::Apollo::Local) && Legion::Apollo::Local.started?
+          log.info 'Legion::Apollo shutdown'
+          clear_state
+        end
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'apollo.shutdown')
-      ensure
-        @started = false
-        @transport_available = nil
-        @data_available = nil
+        clear_state
       end
 
       def started?
@@ -497,6 +504,12 @@ module Legion
 
       def not_started_error
         { success: false, error: :not_started }
+      end
+
+      def clear_state
+        @started = false
+        @transport_available = nil
+        @data_available = nil
       end
 
       def register_routes

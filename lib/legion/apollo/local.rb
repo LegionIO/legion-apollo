@@ -13,68 +13,43 @@ module Legion
     # Mirrors Legion::Apollo's public API but stores locally.
     module Local # rubocop:disable Metrics/ModuleLength
       MIGRATION_PATH = File.expand_path('local/migrations', __dir__).freeze
+      LIFECYCLE_MUTEX = Mutex.new
+      WRITE_MUTEX = Mutex.new
+      SEED_MUTEX = Mutex.new
+      HYDRATION_MUTEX = Mutex.new
 
       class << self # rubocop:disable Metrics/ClassLength
         include Legion::Logging::Helper
 
         def start
-          return if @started
-          return unless local_enabled?
-          return unless data_local_available?
-
-          Legion::Data::Local.register_migrations(name: :apollo_local, path: MIGRATION_PATH)
-          @started = true
-          log.info 'Legion::Apollo::Local started'
+          LIFECYCLE_MUTEX.synchronize { start_without_lock }
+        rescue StandardError => e
+          handle_exception(e, level: :error, operation: 'apollo.local.start')
+          @started = false
         end
 
         def shutdown
+          LIFECYCLE_MUTEX.synchronize do
+            @started = false
+            @seeded = false
+            log.info 'Legion::Apollo::Local shutdown'
+          end
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'apollo.local.shutdown')
           @started = false
-          log.info 'Legion::Apollo::Local shutdown'
+          @seeded = false
         end
 
         def started?
           @started == true
         end
 
-        def ingest(content:, tags: [], **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+        def ingest(content:, tags: [], **opts) # rubocop:disable Metrics/MethodLength
           return not_started_error unless started?
 
-          hash = content_hash(content)
-          if duplicate?(hash)
-            log.info { "Apollo::Local ingest deduplicated hash=#{hash}" }
-            return { success: true, mode: :deduplicated }
+          WRITE_MUTEX.synchronize do
+            ingest_without_lock(content: content, tags: tags, **opts)
           end
-
-          log.info do
-            "Apollo::Local ingest accepted content_length=#{content.to_s.length} " \
-              "tags=#{Array(tags).size} source_channel=#{opts[:source_channel]}"
-          end
-          log.debug { "Apollo::Local ingest hash=#{hash} tags=#{Array(tags).size} source_channel=#{opts[:source_channel]}" }
-
-          embedding, embedded_at = generate_embedding(content)
-          now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
-          expires = compute_expires_at
-
-          row = {
-            content:        content,
-            content_hash:   hash,
-            tags:           Legion::JSON.dump(Array(tags).first(local_setting(:max_tags, 20))),
-            embedding:      embedding ? Legion::JSON.dump(embedding) : nil,
-            embedded_at:    embedded_at,
-            source_channel: opts[:source_channel],
-            source_agent:   opts[:source_agent],
-            submitted_by:   opts[:submitted_by],
-            confidence:     opts[:confidence] || 1.0,
-            expires_at:     expires,
-            created_at:     now,
-            updated_at:     now
-          }
-
-          id = db[:local_knowledge].insert(row)
-          sync_fts(id, content, row[:tags])
-
-          log.info { "Apollo::Local ingest stored id=#{id} hash=#{hash}" }
-          { success: true, mode: :local, id: id }
         rescue StandardError => e
           handle_exception(
             e,
@@ -91,14 +66,16 @@ module Legion
 
           sorted_tags = Array(tags).map(&:to_s).sort
           tag_json = Legion::JSON.dump(sorted_tags)
-          existing = db[:local_knowledge].where(tags: tag_json).first
+          WRITE_MUTEX.synchronize do
+            existing = db[:local_knowledge].where(tags: tag_json).first
 
-          if existing
-            update_upsert_entry(existing, content, tag_json, opts)
-          else
-            result = ingest(content: content, tags: sorted_tags, **opts)
-            result[:mode] = :inserted if result[:success] && result[:mode] != :deduplicated
-            result
+            if existing
+              update_upsert_entry(existing, content, tag_json, opts)
+            else
+              result = ingest_without_lock(content: content, tags: sorted_tags, **opts)
+              result[:mode] = :inserted if result[:success] && result[:mode] != :deduplicated
+              result
+            end
           end
         rescue StandardError => e
           handle_exception(
@@ -152,20 +129,16 @@ module Legion
         end
 
         def reset!
-          @started = false
-          @seeded = false
+          LIFECYCLE_MUTEX.synchronize do
+            @started = false
+            @seeded = false
+          end
         end
 
         def seed_self_knowledge
           return unless started?
-          return if @seeded
 
-          files = self_knowledge_files
-          return if files.empty?
-
-          count = seed_files(files)
-          @seeded = true
-          log.info("Apollo::Local seeded #{count} self-knowledge files")
+          SEED_MUTEX.synchronize { seed_self_knowledge_without_lock }
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'apollo.local.seed_self_knowledge')
         end
@@ -236,44 +209,10 @@ module Legion
           { success: false, error: e.message }
         end
 
-        def hydrate_from_global # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+        def hydrate_from_global
           return { success: false, error: :not_started } unless started?
 
-          local_check = query_by_tags(tags: ['partner'])
-          if local_check[:success] && local_check[:results]&.any?
-            log.info 'Apollo::Local hydration skipped because local partner data already exists'
-            return { success: true, skipped: :local_data_exists }
-          end
-
-          unless Legion::Apollo.transport_available? || Legion::Apollo.data_available?
-            log.info 'Apollo::Local hydration skipped because global Apollo is unavailable'
-            return { success: true, skipped: :global_unavailable }
-          end
-
-          global_entries = Legion::Apollo.retrieve(text: 'partner bond', scope: :global, limit: 20)
-          entries = Array(global_entries[:entries] || global_entries[:results])
-          unless global_entries[:success] && entries.any?
-            log.info 'Apollo::Local hydration skipped because no global partner data was found'
-            return { success: true, skipped: :no_global_data }
-          end
-
-          log.info { "Apollo::Local hydration started global_count=#{entries.size}" }
-          hydrated = 0
-          entries.each do |entry|
-            entry_tags = entry[:tags].is_a?(Array) ? entry[:tags] : []
-            clean_tags = entry_tags.reject { |t| t == 'promoted_from_local' } + ['hydrated_from_global']
-
-            result = ingest(
-              content:        entry[:content],
-              tags:           clean_tags,
-              confidence:     ((entry[:confidence] || 0.5) * 0.9).round(10),
-              source_channel: 'global_hydration'
-            )
-            hydrated += 1 if result[:success]
-          end
-
-          log.info { "Apollo::Local hydration completed hydrated=#{hydrated}" }
-          { success: true, hydrated: hydrated }
+          HYDRATION_MUTEX.synchronize { hydrate_from_global_without_lock }
         rescue StandardError => e
           handle_exception(e, level: :error, operation: 'apollo.local.hydrate_from_global')
           { success: false, error: e.message }
@@ -362,6 +301,110 @@ module Legion
           false
         end
 
+        def start_without_lock
+          return if @started
+          return unless local_enabled? && data_local_available?
+
+          Legion::Data::Local.register_migrations(name: :apollo_local, path: MIGRATION_PATH)
+          @started = true
+          log.info 'Legion::Apollo::Local started'
+        end
+
+        def seed_self_knowledge_without_lock
+          return if @seeded
+
+          files = self_knowledge_files
+          return if files.empty?
+
+          count = seed_files(files)
+          @seeded = true
+          log.info("Apollo::Local seeded #{count} self-knowledge files")
+        end
+
+        def hydrate_from_global_without_lock # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+          local_check = query_by_tags(tags: ['partner'])
+          if local_check[:success] && local_check[:results]&.any?
+            log.info 'Apollo::Local hydration skipped because local partner data already exists'
+            return { success: true, skipped: :local_data_exists }
+          end
+
+          unless Legion::Apollo.transport_available? || Legion::Apollo.data_available?
+            log.info 'Apollo::Local hydration skipped because global Apollo is unavailable'
+            return { success: true, skipped: :global_unavailable }
+          end
+
+          global_entries = Legion::Apollo.retrieve(text: 'partner bond', scope: :global, limit: 20)
+          entries = Array(global_entries[:entries] || global_entries[:results])
+          unless global_entries[:success] && entries.any?
+            log.info 'Apollo::Local hydration skipped because no global partner data was found'
+            return { success: true, skipped: :no_global_data }
+          end
+
+          log.info { "Apollo::Local hydration started global_count=#{entries.size}" }
+          hydrated = 0
+          entries.each do |entry|
+            entry_tags = entry[:tags].is_a?(Array) ? entry[:tags] : []
+            clean_tags = entry_tags.reject { |tag| tag == 'promoted_from_local' } + ['hydrated_from_global']
+
+            result = ingest(
+              content:        entry[:content],
+              tags:           clean_tags,
+              confidence:     ((entry[:confidence] || 0.5) * 0.9).round(10),
+              source_channel: 'global_hydration'
+            )
+            hydrated += 1 if result[:success]
+          end
+
+          log.info { "Apollo::Local hydration completed hydrated=#{hydrated}" }
+          { success: true, hydrated: hydrated }
+        end
+
+        def ingest_without_lock(content:, tags:, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+          hash = content_hash(content)
+          return deduplicated_ingest(hash) if duplicate?(hash)
+
+          log.info do
+            "Apollo::Local ingest accepted content_length=#{content.to_s.length} " \
+              "tags=#{Array(tags).size} source_channel=#{opts[:source_channel]}"
+          end
+          log.debug { "Apollo::Local ingest hash=#{hash} tags=#{Array(tags).size} source_channel=#{opts[:source_channel]}" }
+
+          row = build_ingest_row(content: content, hash: hash, tags: tags, **opts)
+          id = persist_ingest_row(row)
+
+          log.info { "Apollo::Local ingest stored id=#{id} hash=#{hash}" }
+          { success: true, mode: :local, id: id }
+        rescue Sequel::UniqueConstraintViolation
+          raise unless duplicate?(hash)
+
+          deduplicated_ingest(hash)
+        end
+
+        def build_ingest_row(content:, hash:, tags:, **opts)
+          {
+            content:        content,
+            content_hash:   hash,
+            tags:           serialized_tags(tags),
+            source_channel: opts[:source_channel],
+            source_agent:   opts[:source_agent],
+            submitted_by:   opts[:submitted_by],
+            confidence:     opts[:confidence] || 1.0
+          }.merge(embedding_columns(content)).merge(timestamp_columns)
+        end
+
+        def persist_ingest_row(row)
+          db.transaction do
+            id = db[:local_knowledge].insert(row)
+            sync_fts!(id, row[:content], row[:tags])
+            id
+          end
+        end
+
+        def deduplicated_ingest(hash)
+          log.info { "Apollo::Local ingest deduplicated hash=#{hash}" }
+          { success: true, mode: :deduplicated }
+        end
+
         def generate_embedding(content) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
           unless defined?(Legion::LLM) && Legion::LLM.respond_to?(:can_embed?) && Legion::LLM.can_embed?
             log.debug 'Apollo::Local embedding skipped because embeddings are unavailable'
@@ -392,19 +435,30 @@ module Legion
           (Time.now.utc + (years * 365.25 * 24 * 3600)).strftime('%Y-%m-%dT%H:%M:%S.%LZ')
         end
 
-        def sync_fts(id, content, tags_json) # rubocop:disable Metrics/MethodLength
+        def sync_fts!(id, content, tags_json)
           sql = 'INSERT INTO local_knowledge_fts(rowid, content, tags) ' \
                 "VALUES (#{id}, #{db.literal(content)}, #{db.literal(tags_json)})"
           db.run(sql)
           log.debug { "Apollo::Local FTS synced id=#{id}" }
-        rescue StandardError => e
-          handle_exception(
-            e,
-            level:          :warn,
-            operation:      'apollo.local.sync_fts',
-            id:             id,
-            content_length: content.to_s.length
-          )
+        end
+
+        def embedding_columns(content)
+          embedding, embedded_at = generate_embedding(content)
+
+          {
+            embedding:   embedding ? Legion::JSON.dump(embedding) : nil,
+            embedded_at: embedded_at,
+            expires_at:  compute_expires_at
+          }
+        end
+
+        def timestamp_columns
+          now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+          { created_at: now, updated_at: now }
+        end
+
+        def serialized_tags(tags)
+          Legion::JSON.dump(Array(tags).first(local_setting(:max_tags, 20)))
         end
 
         def fts_search(text, limit:) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
@@ -555,37 +609,30 @@ module Legion
           now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
           expires_at = compute_expires_at
 
-          db[:local_knowledge].where(id: existing[:id]).update(
-            content:        content,
-            content_hash:   new_hash,
-            tags:           tags_json,
-            embedding:      embedding ? Legion::JSON.dump(embedding) : nil,
-            embedded_at:    embedded_at,
-            confidence:     opts.fetch(:confidence, existing[:confidence]),
-            expires_at:     expires_at,
-            source_channel: opts.fetch(:source_channel, existing[:source_channel]),
-            source_agent:   opts.fetch(:source_agent, existing[:source_agent]),
-            submitted_by:   opts.fetch(:submitted_by, existing[:submitted_by]),
-            updated_at:     now
-          )
-          rebuild_fts_entry(existing[:id], content, tags_json)
+          db.transaction do
+            db[:local_knowledge].where(id: existing[:id]).update(
+              content:        content,
+              content_hash:   new_hash,
+              tags:           tags_json,
+              embedding:      embedding ? Legion::JSON.dump(embedding) : nil,
+              embedded_at:    embedded_at,
+              confidence:     opts.fetch(:confidence, existing[:confidence]),
+              expires_at:     expires_at,
+              source_channel: opts.fetch(:source_channel, existing[:source_channel]),
+              source_agent:   opts.fetch(:source_agent, existing[:source_agent]),
+              submitted_by:   opts.fetch(:submitted_by, existing[:submitted_by]),
+              updated_at:     now
+            )
+            rebuild_fts_entry!(existing[:id], content, tags_json)
+          end
           log.info { "Apollo::Local upsert updated id=#{existing[:id]} hash=#{new_hash}" }
           { success: true, mode: :updated, id: existing[:id] }
         end
 
-        def rebuild_fts_entry(id, content, tags_json) # rubocop:disable Metrics/MethodLength
+        def rebuild_fts_entry!(id, content, tags_json)
           db.run("DELETE FROM local_knowledge_fts WHERE rowid = #{id}")
-          sync_fts(id, content, tags_json)
+          sync_fts!(id, content, tags_json)
           log.debug { "Apollo::Local FTS rebuilt id=#{id}" }
-        rescue StandardError => e
-          handle_exception(
-            e,
-            level:          :warn,
-            operation:      'apollo.local.rebuild_fts_entry',
-            id:             id,
-            content_length: content.to_s.length
-          )
-          nil
         end
 
         def not_started_error

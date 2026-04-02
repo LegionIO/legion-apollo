@@ -14,6 +14,7 @@
 - `apollo.enabled` now gates startup, `Apollo::Local.query_by_tags` filters in SQLite before applying limits, and message publish behavior has direct spec coverage
 - Blank local queries now bypass invalid FTS `MATCH ''` calls while still supporting tag-filtered lookups
 - REST query and ingest routes now delegate to `Legion::Apollo`, return `202` for async transport fallback, and stop reporting failed ingests as `201 Created`
+- Apollo and Apollo::Local lifecycle, seeding, and hydration flows are now serialized, while local ingest/upsert keeps base rows and FTS updates inside the same transaction and treats duplicate content races as deterministic deduplication
 
 ## [0.3.7] - 2026-03-31
 

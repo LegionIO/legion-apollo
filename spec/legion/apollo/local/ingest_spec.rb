@@ -48,6 +48,17 @@ RSpec.describe 'Apollo::Local ingest' do
     expect(db[:local_knowledge].count).to eq(1)
   end
 
+  it 'deduplicates when the unique constraint is hit after the duplicate precheck' do
+    Legion::Apollo::Local.ingest(content: 'same content', tags: %w[a])
+    allow(Legion::Apollo::Local).to receive(:duplicate?).and_return(false, true)
+
+    result = Legion::Apollo::Local.ingest(content: 'same content', tags: %w[b])
+
+    expect(result[:success]).to be true
+    expect(result[:mode]).to eq(:deduplicated)
+    expect(db[:local_knowledge].count).to eq(1)
+  end
+
   it 'sets expires_at based on retention_years setting' do
     Legion::Apollo::Local.ingest(content: 'test expiry', tags: [])
     row = db[:local_knowledge].first
@@ -77,6 +88,16 @@ RSpec.describe 'Apollo::Local ingest' do
     expect(row[:embedded_at]).not_to be_nil
     parsed = Legion::JSON.parse(row[:embedding])
     expect(parsed.size).to eq(1024)
+  end
+
+  it 'rolls back the base row when FTS sync fails' do
+    allow(Legion::Apollo::Local).to receive(:sync_fts!).and_raise(StandardError, 'fts failure')
+
+    result = Legion::Apollo::Local.ingest(content: 'broken fts write', tags: %w[test])
+
+    expect(result[:success]).to be false
+    expect(result[:error]).to eq('fts failure')
+    expect(db[:local_knowledge].count).to eq(0)
   end
 
   it 'returns not_started when not started' do

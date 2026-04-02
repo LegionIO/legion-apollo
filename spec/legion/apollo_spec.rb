@@ -23,6 +23,30 @@ RSpec.describe Legion::Apollo do
 
       expect(described_class.started?).to be false
     end
+
+    it 'starts the local store before Apollo reports started' do
+      allow(Legion::Apollo::Local).to receive(:start) do
+        expect(described_class.started?).to be false
+      end
+      allow(Legion::Apollo::Local).to receive(:started?).and_return(false)
+
+      described_class.start
+
+      expect(described_class.started?).to be true
+    end
+
+    it 'serializes concurrent start calls' do
+      allow(Legion::Apollo::Local).to receive(:start) do
+        sleep 0.05
+      end
+      allow(Legion::Apollo::Local).to receive(:started?).and_return(false)
+
+      threads = Array.new(2) { Thread.new { described_class.start } }
+      threads.each(&:join)
+
+      expect(Legion::Apollo::Local).to have_received(:start).once
+      expect(described_class.started?).to be true
+    end
   end
 
   describe '.shutdown' do

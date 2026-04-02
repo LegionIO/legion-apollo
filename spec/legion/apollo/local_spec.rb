@@ -160,6 +160,26 @@ RSpec.describe Legion::Apollo::Local do
       expect(query_result[:success]).to be true
       expect(query_result[:results].map { |entry| entry[:id] }).to include(row_id)
     end
+
+    it 'rolls back the base row update when FTS rebuild fails' do
+      tags = %w[social_graph reputation agent-123]
+      create_result = described_class.upsert(content: 'initial state', tags: tags, source_channel: 'gaia')
+      row_id = create_result[:id]
+
+      allow(described_class).to receive(:rebuild_fts_entry!).and_raise(StandardError, 'fts rebuild failure')
+
+      result = described_class.upsert(content: 'updated state', tags: tags, source_channel: 'gaia')
+
+      expect(result[:success]).to be false
+      expect(result[:error]).to eq('fts rebuild failure')
+
+      row = db[:local_knowledge].where(id: row_id).first
+      expect(row[:content]).to eq('initial state')
+
+      query_result = described_class.query(text: 'initial state', tags: tags)
+      expect(query_result[:success]).to be true
+      expect(query_result[:results].map { |entry| entry[:id] }).to include(row_id)
+    end
   end
 
   describe '#seed_self_knowledge' do
