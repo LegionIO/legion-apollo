@@ -56,6 +56,14 @@ RSpec.describe 'Apollo::Local query' do
     expect(matching).to be_empty
   end
 
+  it 'supports blank text queries when tags narrow the result set' do
+    result = Legion::Apollo::Local.query(text: '', tags: %w[rabbitmq])
+
+    expect(result[:success]).to be true
+    expect(result[:results]).not_to be_empty
+    expect(result[:results].map { |entry| entry[:content] }).to include('RabbitMQ clustering works by mirroring queues')
+  end
+
   it 'filters by min_confidence' do
     Legion::Apollo::Local.ingest(content: 'low confidence entry about queues', tags: %w[test], confidence: 0.1)
     result = Legion::Apollo::Local.query(text: 'queues', min_confidence: 0.5)

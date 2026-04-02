@@ -408,6 +408,13 @@ module Legion
         end
 
         def fts_search(text, limit:) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+          if text.to_s.strip.empty?
+            return db[:local_knowledge]
+                   .where(Sequel.lit('expires_at > ?', Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')))
+                   .limit(limit)
+                   .all
+          end
+
           escaped = text.to_s.gsub('"', '""')
           now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
           db.fetch(
