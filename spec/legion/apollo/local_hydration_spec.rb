@@ -35,7 +35,7 @@ RSpec.describe Legion::Apollo::Local do
         allow(Legion::Apollo).to receive(:data_available?).and_return(false)
         allow(Legion::Apollo).to receive(:retrieve).and_return({
                                                                  success: true,
-                                                                 results: [
+                                                                 entries: [
                                                                    { content: 'partner bond data',
 tags: %w[bond attachment promoted_from_local], confidence: 0.8 }
                                                                  ]

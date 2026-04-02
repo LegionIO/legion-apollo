@@ -297,6 +297,13 @@ module Legion
           end
         end
 
+        if !attempted && transport_available?
+          log.info do
+            'Apollo merged query falling back to async global transport because no synchronous backends are available'
+          end
+          return publish_query(payload)
+        end
+
         return { success: false, error: :no_path_available } unless attempted
 
         unless any_success

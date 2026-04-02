@@ -109,12 +109,31 @@ results: [{ id: 1, content: 'local fact', content_hash: 'abc', confidence: 0.8, 
     context 'when no sources are available' do
       before do
         allow(described_class).to receive(:co_located_reader?).and_return(false)
+        allow(described_class).to receive(:transport_available?).and_return(false)
         allow(Legion::Apollo::Local).to receive(:started?).and_return(false)
       end
 
       it 'returns no_path_available' do
         result = described_class.query(text: 'test', scope: :all)
         expect(result).to eq({ success: false, error: :no_path_available })
+      end
+    end
+
+    context 'when only transport is available' do
+      before do
+        allow(described_class).to receive(:co_located_reader?).and_return(false)
+        allow(described_class).to receive(:transport_available?).and_return(true)
+        allow(Legion::Apollo::Local).to receive(:started?).and_return(false)
+        allow(described_class).to receive(:publish_query).and_return({ success: true, mode: :async })
+      end
+
+      it 'falls back to async global publish' do
+        result = described_class.query(text: 'test', scope: :all)
+
+        expect(result).to eq({ success: true, mode: :async })
+        expect(described_class).to have_received(:publish_query).with(
+          hash_including(text: 'test', limit: 5, min_confidence: 0.3)
+        )
       end
     end
   end

@@ -258,14 +258,15 @@ module Legion
           end
 
           global_entries = Legion::Apollo.retrieve(text: 'partner bond', scope: :global, limit: 20)
-          unless global_entries[:success] && global_entries[:results]&.any?
+          entries = Array(global_entries[:entries] || global_entries[:results])
+          unless global_entries[:success] && entries.any?
             log.info 'Apollo::Local hydration skipped because no global partner data was found'
             return { success: true, skipped: :no_global_data }
           end
 
-          log.info { "Apollo::Local hydration started global_count=#{global_entries[:results].size}" }
+          log.info { "Apollo::Local hydration started global_count=#{entries.size}" }
           hydrated = 0
-          global_entries[:results].each do |entry|
+          entries.each do |entry|
             entry_tags = entry[:tags].is_a?(Array) ? entry[:tags] : []
             clean_tags = entry_tags.reject { |t| t == 'promoted_from_local' } + ['hydrated_from_global']
 
