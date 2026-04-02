@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require 'digest'
+require 'legion/logging'
 require_relative 'apollo/version'
 require_relative 'apollo/settings'
 require_relative 'apollo/local'
@@ -14,6 +15,8 @@ module Legion
   # Supports scope: :global (default), :local (SQLite only), :all (merged).
   module Apollo # rubocop:disable Metrics/ModuleLength
     class << self # rubocop:disable Metrics/ClassLength
+      include Legion::Logging::Helper
+
       def start
         return if @started
 
@@ -22,7 +25,7 @@ module Legion
         detect_data
 
         @started = true
-        Legion::Logging.info 'Legion::Apollo started' if defined?(Legion::Logging)
+        log.info 'Legion::Apollo started'
 
         register_routes
         Legion::Apollo::Local.start
@@ -34,7 +37,7 @@ module Legion
         @started = false
         @transport_available = nil
         @data_available = nil
-        Legion::Logging.info 'Legion::Apollo shutdown' if defined?(Legion::Logging)
+        log.info 'Legion::Apollo shutdown'
       end
 
       def started?
@@ -45,11 +48,15 @@ module Legion
         Legion::Apollo::Local
       end
 
-      def query(text:, limit: nil, min_confidence: nil, tags: nil, scope: :global, **opts) # rubocop:disable Metrics/MethodLength,Metrics/CyclomaticComplexity,Metrics/ParameterLists
+      def query(text:, limit: nil, min_confidence: nil, tags: nil, scope: :global, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/ParameterLists
         return not_started_error unless started?
 
         limit          ||= apollo_setting(:default_limit, 5)
         min_confidence ||= apollo_setting(:min_confidence, 0.3)
+        log.info { "Apollo query requested scope=#{scope} text_length=#{text.to_s.length} limit=#{limit}" }
+        log.debug do
+          "Apollo query scope=#{scope} limit=#{limit} min_confidence=#{min_confidence} tags=#{Array(tags).size}"
+        end
 
         payload = { text: text, limit: limit, min_confidence: min_confidence, tags: tags, **opts }
 
@@ -67,10 +74,17 @@ module Legion
         end
       end
 
-      def ingest(content:, tags: [], scope: :global, **opts) # rubocop:disable Metrics/MethodLength
+      def ingest(content:, tags: [], scope: :global, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
         return not_started_error unless started?
 
         payload = { content: content, tags: Array(tags).first(apollo_setting(:max_tags, 20)), **opts }
+        log.info do
+          "Apollo ingest requested scope=#{scope} content_length=#{content.to_s.length} " \
+            "tags=#{payload[:tags].size} source_channel=#{payload[:source_channel]}"
+        end
+        log.debug do
+          "Apollo ingest scope=#{scope} tags=#{payload[:tags].size} source_channel=#{payload[:source_channel]}"
+        end
 
         case scope
         when :local then ingest_local(payload)
@@ -98,10 +112,18 @@ module Legion
       # @param depth [Integer] max traversal hops (1..10)
       # @param direction [Symbol] :outbound (default) or :inbound
       # @return [Hash] { success:, nodes:, edges:, count: }
-      def graph_query(entity_id:, relation_type: nil, depth: 3, direction: :outbound)
+      def graph_query(entity_id:, relation_type: nil, depth: 3, direction: :outbound) # rubocop:disable Metrics/MethodLength
         return not_started_error unless started?
         return { success: false, error: :local_not_started } unless Legion::Apollo::Local.started?
 
+        log.info do
+          "Apollo graph query requested entity_id=#{entity_id} relation_type=#{relation_type || 'any'} " \
+            "depth=#{depth} direction=#{direction}"
+        end
+        log.debug do
+          "Apollo graph_query entity_id=#{entity_id} relation_type=#{relation_type} " \
+            "depth=#{depth} direction=#{direction}"
+        end
         Legion::Apollo::Local::Graph.traverse(
           entity_id:     entity_id,
           relation_type: relation_type,
@@ -109,6 +131,15 @@ module Legion
           direction:     direction
         )
       rescue StandardError => e
+        handle_exception(
+          e,
+          level:         :error,
+          operation:     'apollo.graph_query',
+          entity_id:     entity_id,
+          relation_type: relation_type,
+          depth:         depth,
+          direction:     direction
+        )
         { success: false, error: e.message }
       end
 
@@ -126,22 +157,27 @@ module Legion
         return unless defined?(Legion::Settings)
 
         defaults = Legion::Apollo::Settings.default
-        Legion::Settings[:apollo] = defaults.merge(Legion::Settings[:apollo] || {})
+        Legion::Settings.merge_settings(:apollo, defaults)
+        log.info 'Apollo settings merged'
       rescue StandardError => e
-        Legion::Logging.debug("Apollo settings merge failed: #{e.message}") if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'apollo.merge_settings')
       end
 
       def detect_transport
         @transport_available = defined?(Legion::Transport) &&
                                Legion::Settings[:transport][:connected] == true
-      rescue StandardError
+        log.debug { "Apollo transport detected available=#{@transport_available}" }
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'apollo.detect_transport')
         @transport_available = false
       end
 
       def detect_data
         @data_available = defined?(Legion::Data) &&
                           Legion::Settings[:data][:connected] == true
-      rescue StandardError
+        log.debug { "Apollo data detected available=#{@data_available}" }
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'apollo.detect_data')
         @data_available = false
       end
 
@@ -150,7 +186,8 @@ module Legion
 
         defined?(Legion::Extensions::Apollo::Runners::Knowledge) &&
           Legion::Extensions::Apollo::Runners::Knowledge.respond_to?(:handle_query)
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'apollo.co_located_reader')
         false
       end
 
@@ -159,51 +196,76 @@ module Legion
 
         defined?(Legion::Extensions::Apollo::Runners::Knowledge) &&
           Legion::Extensions::Apollo::Runners::Knowledge.respond_to?(:handle_ingest)
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'apollo.co_located_writer')
         false
       end
 
       def direct_query(payload)
-        Legion::Extensions::Apollo::Runners::Knowledge.handle_query(**payload)
+        log.info do
+          "Apollo query using co-located reader text_length=#{payload[:text].to_s.length} " \
+            "limit=#{payload[:limit]}"
+        end
+        Legion::Extensions::Apollo::Runners::Knowledge.handle_query(**normalize_query_payload(payload))
       rescue StandardError => e
+        handle_exception(e, level: :error, operation: 'apollo.direct_query', payload_keys: payload.keys)
         { success: false, error: e.message }
       end
 
       def direct_ingest(payload)
+        log.info do
+          "Apollo ingest using co-located writer tags=#{Array(payload[:tags]).size} " \
+            "source_channel=#{payload[:source_channel]}"
+        end
         Legion::Extensions::Apollo::Runners::Knowledge.handle_ingest(**payload)
       rescue StandardError => e
+        handle_exception(e, level: :error, operation: 'apollo.direct_ingest', payload_keys: payload.keys)
         { success: false, error: e.message }
       end
 
       def publish_query(payload)
         require_relative 'apollo/messages/query' unless defined?(Legion::Apollo::Messages::Query)
         Legion::Apollo::Messages::Query.new.publish(Legion::JSON.dump(payload))
+        log.info { "Apollo query published asynchronously text_length=#{payload[:text].to_s.length}" }
         { success: true, mode: :async }
       rescue StandardError => e
+        handle_exception(e, level: :error, operation: 'apollo.publish_query', payload_keys: payload.keys)
         { success: false, error: e.message }
       end
 
       def publish_ingest(payload)
         require_relative 'apollo/messages/ingest' unless defined?(Legion::Apollo::Messages::Ingest)
         Legion::Apollo::Messages::Ingest.new.publish(Legion::JSON.dump(payload))
+        log.info { "Apollo ingest published asynchronously tags=#{Array(payload[:tags]).size}" }
         { success: true, mode: :async }
       rescue StandardError => e
+        handle_exception(e, level: :error, operation: 'apollo.publish_ingest', payload_keys: payload.keys)
         { success: false, error: e.message }
       end
 
-      def query_local(payload)
+      def query_local(payload) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
         return { success: false, error: :no_path_available } unless Legion::Apollo::Local.started?
 
+        log.info do
+          "Apollo query using local store text_length=#{payload[:text].to_s.length} " \
+            "limit=#{payload[:limit]}"
+        end
         result = Legion::Apollo::Local.query(**payload.slice(:text, :limit, :min_confidence, :tags))
         return result unless result[:success]
 
         entries = normalize_local_entries(Array(result[:results]))
+        log.info { "Apollo local query completed count=#{entries.size}" }
         { success: true, entries: entries, count: entries.size, mode: :local }
       rescue StandardError => e
+        handle_exception(e, level: :error, operation: 'apollo.query_local', payload_keys: payload.keys)
         { success: false, error: e.message }
       end
 
       def query_merged(payload) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+        log.info do
+          "Apollo query using merged backends text_length=#{payload[:text].to_s.length} " \
+            "limit=#{payload[:limit]} local_started=#{Legion::Apollo::Local.started?}"
+        end
         entries = []
         attempted = false
         any_success = false
@@ -240,9 +302,17 @@ module Legion
         end
 
         ranked = dedup_and_rank(entries, limit: payload[:limit])
+        log.info { "Apollo merged query completed count=#{ranked.size}" }
         { success: true, entries: ranked, count: ranked.size, mode: :merged }
       rescue StandardError => e
+        handle_exception(e, level: :error, operation: 'apollo.query_merged', payload_keys: payload.keys)
         { success: false, error: e.message }
+      end
+
+      def normalize_query_payload(payload)
+        return payload if payload.key?(:query)
+
+        payload.merge(query: payload[:text])
       end
 
       def normalize_local_entries(entries) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
@@ -251,7 +321,8 @@ module Legion
           tags = if e[:tags].is_a?(String)
                    begin
                      Legion::JSON.parse(e[:tags])
-                   rescue StandardError
+                   rescue StandardError => ex
+                     handle_exception(ex, level: :debug, operation: 'apollo.normalize_local_entries', entry_id: e[:id])
                      []
                    end
                  else
@@ -282,12 +353,21 @@ module Legion
       def ingest_local(payload)
         return { success: false, error: :no_path_available } unless Legion::Apollo::Local.started?
 
+        log.info do
+          "Apollo ingest using local store tags=#{Array(payload[:tags]).size} " \
+            "source_channel=#{payload[:source_channel]}"
+        end
         Legion::Apollo::Local.ingest(**payload)
       rescue StandardError => e
+        handle_exception(e, level: :error, operation: 'apollo.ingest_local', payload_keys: payload.keys)
         { success: false, error: e.message }
       end
 
       def ingest_all(payload) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+        log.info do
+          "Apollo ingest using all backends tags=#{Array(payload[:tags]).size} " \
+            "local_started=#{Legion::Apollo::Local.started?}"
+        end
         results = []
 
         if co_located_writer?
@@ -303,6 +383,7 @@ module Legion
         overall_success = results.any? { |r| r.respond_to?(:[]) && r[:success] }
 
         if overall_success
+          log.info { "Apollo all-backend ingest completed results=#{results.size}" }
           { success: true, mode: :all, results: results }
         else
           errors = results.select { |r| r.respond_to?(:[]) }.map { |r| r[:error] }.compact.uniq
@@ -310,22 +391,23 @@ module Legion
           { success: false, mode: :all, results: results, error: error_value }
         end
       rescue StandardError => e
+        handle_exception(e, level: :error, operation: 'apollo.ingest_all', payload_keys: payload.keys)
         { success: false, error: e.message }
       end
 
       def seed_self_knowledge
+        log.info 'Apollo self-knowledge seed requested'
         Legion::Apollo::Local.seed_self_knowledge if Legion::Apollo::Local.started?
       rescue StandardError => e
-        if defined?(Legion::Logging)
-          Legion::Logging.warn("Apollo self-knowledge seed failed (#{e.class}): #{e.message}")
-        end
+        handle_exception(e, level: :warn, operation: 'apollo.seed_self_knowledge')
       end
 
       def apollo_setting(key, default)
         return default unless defined?(Legion::Settings) && !Legion::Settings[:apollo].nil?
 
         Legion::Settings[:apollo][key] || default
-      rescue StandardError
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'apollo.apollo_setting', key: key)
         default
       end
 
@@ -337,9 +419,9 @@ module Legion
         return unless defined?(Legion::API) && Legion::API.respond_to?(:register_library_routes)
 
         Legion::API.register_library_routes('apollo', Legion::Apollo::Routes)
-        Legion::Logging.debug 'Legion::Apollo routes registered with API' if defined?(Legion::Logging)
+        log.debug 'Legion::Apollo routes registered with API'
       rescue StandardError => e
-        Legion::Logging.warn "Legion::Apollo route registration failed: #{e.message}" if defined?(Legion::Logging)
+        handle_exception(e, level: :warn, operation: 'apollo.register_routes')
       end
     end
   end

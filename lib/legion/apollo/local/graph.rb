@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'legion/logging'
 require 'time'
 
 module Legion
@@ -13,6 +14,8 @@ module Legion
         VALID_RELATION_TYPES = %w[AFFECTS OWNED_BY DEPENDS_ON RELATED_TO].freeze
 
         class << self # rubocop:disable Metrics/ClassLength
+          include Legion::Logging::Helper
+
           # --- Entity CRUD ---
 
           def create_entity(type:, name:, domain: nil, attributes: {}) # rubocop:disable Metrics/MethodLength
@@ -25,8 +28,16 @@ module Legion
               created_at:  now,
               updated_at:  now
             )
+            log.info { "Apollo::Local::Graph created entity id=#{id} type=#{type} name=#{name}" }
             { success: true, id: id }
           rescue Sequel::Error => e
+            handle_exception(
+              e,
+              level:       :error,
+              operation:   'apollo.local.graph.create_entity',
+              entity_type: type,
+              name:        name
+            )
             { success: false, error: e.message }
           end
 
@@ -34,26 +45,44 @@ module Legion
             row = db[:local_entities].where(id: id).first
             return { success: false, error: :not_found } unless row
 
+            log.debug { "Apollo::Local::Graph found entity id=#{id}" }
             { success: true, entity: decode_entity(row) }
           rescue Sequel::Error => e
+            handle_exception(e, level: :error, operation: 'apollo.local.graph.find_entity', entity_id: id)
             { success: false, error: e.message }
           end
 
-          def find_entities_by_type(type:, limit: 50)
+          def find_entities_by_type(type:, limit: 50) # rubocop:disable Metrics/MethodLength
             rows = db[:local_entities].where(entity_type: type.to_s).limit(limit).all
+            log.debug { "Apollo::Local::Graph found entities type=#{type} count=#{rows.size}" }
             { success: true, entities: rows.map { |r| decode_entity(r) }, count: rows.size }
           rescue Sequel::Error => e
+            handle_exception(
+              e,
+              level:       :error,
+              operation:   'apollo.local.graph.find_entities_by_type',
+              entity_type: type,
+              limit:       limit
+            )
             { success: false, error: e.message }
           end
 
-          def find_entities_by_name(name:, limit: 50)
+          def find_entities_by_name(name:, limit: 50) # rubocop:disable Metrics/MethodLength
             rows = db[:local_entities].where(name: name.to_s).limit(limit).all
+            log.debug { "Apollo::Local::Graph found entities name=#{name} count=#{rows.size}" }
             { success: true, entities: rows.map { |r| decode_entity(r) }, count: rows.size }
           rescue Sequel::Error => e
+            handle_exception(
+              e,
+              level:     :error,
+              operation: 'apollo.local.graph.find_entities_by_name',
+              name:      name,
+              limit:     limit
+            )
             { success: false, error: e.message }
           end
 
-          def update_entity(id:, **fields)
+          def update_entity(id:, **fields) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
             now = timestamp
             updates = fields.slice(:entity_type, :name, :domain).transform_values(&:to_s)
             updates[:attributes] = encode(fields[:attributes]) if fields.key?(:attributes)
@@ -62,19 +91,29 @@ module Legion
             count = db[:local_entities].where(id: id).update(updates)
             return { success: false, error: :not_found } if count.zero?
 
+            log.info { "Apollo::Local::Graph updated entity id=#{id}" }
             { success: true, id: id }
           rescue Sequel::Error => e
+            handle_exception(
+              e,
+              level:     :error,
+              operation: 'apollo.local.graph.update_entity',
+              entity_id: id,
+              fields:    fields.keys
+            )
             { success: false, error: e.message }
           end
 
-          def delete_entity(id:)
+          def delete_entity(id:) # rubocop:disable Metrics/AbcSize
             db[:local_relationships].where(source_entity_id: id).delete
             db[:local_relationships].where(target_entity_id: id).delete
             count = db[:local_entities].where(id: id).delete
             return { success: false, error: :not_found } if count.zero?
 
+            log.info { "Apollo::Local::Graph deleted entity id=#{id}" }
             { success: true, id: id }
           rescue Sequel::Error => e
+            handle_exception(e, level: :error, operation: 'apollo.local.graph.delete_entity', entity_id: id)
             { success: false, error: e.message }
           end
 
@@ -90,12 +129,24 @@ module Legion
               created_at:       now,
               updated_at:       now
             )
+            log.info do
+              "Apollo::Local::Graph created relationship id=#{id} source_id=#{source_id} " \
+                "target_id=#{target_id} relation_type=#{relation_type.to_s.upcase}"
+            end
             { success: true, id: id }
           rescue Sequel::Error => e
+            handle_exception(
+              e,
+              level:         :error,
+              operation:     'apollo.local.graph.create_relationship',
+              source_id:     source_id,
+              target_id:     target_id,
+              relation_type: relation_type
+            )
             { success: false, error: e.message }
           end
 
-          def find_relationships(entity_id:, relation_type: nil, direction: :outbound)
+          def find_relationships(entity_id:, relation_type: nil, direction: :outbound) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
             ds = case direction
                  when :inbound  then db[:local_relationships].where(target_entity_id: entity_id)
                  when :both     then relationship_both_directions(entity_id)
@@ -103,8 +154,20 @@ module Legion
                  end
             ds = ds.where(relation_type: relation_type.to_s.upcase) if relation_type
             rows = ds.all
+            log.debug do
+              "Apollo::Local::Graph found relationships entity_id=#{entity_id} direction=#{direction} " \
+                "relation_type=#{relation_type || 'any'} count=#{rows.size}"
+            end
             { success: true, relationships: rows.map { |r| decode_relationship(r) }, count: rows.size }
           rescue Sequel::Error => e
+            handle_exception(
+              e,
+              level:         :error,
+              operation:     'apollo.local.graph.find_relationships',
+              entity_id:     entity_id,
+              relation_type: relation_type,
+              direction:     direction
+            )
             { success: false, error: e.message }
           end
 
@@ -112,8 +175,10 @@ module Legion
             count = db[:local_relationships].where(id: id).delete
             return { success: false, error: :not_found } if count.zero?
 
+            log.info { "Apollo::Local::Graph deleted relationship id=#{id}" }
             { success: true, id: id }
           rescue Sequel::Error => e
+            handle_exception(e, level: :error, operation: 'apollo.local.graph.delete_relationship', relationship_id: id)
             { success: false, error: e.message }
           end
 
@@ -141,6 +206,15 @@ module Legion
               count:   entity_rows.size
             }
           rescue Sequel::Error => e
+            handle_exception(
+              e,
+              level:         :error,
+              operation:     'apollo.local.graph.traverse',
+              entity_id:     entity_id,
+              relation_type: relation_type,
+              depth:         depth,
+              direction:     direction
+            )
             { success: false, error: e.message }
           end
 
@@ -206,7 +280,8 @@ module Legion
             return '{}' if obj.nil? || obj.empty?
 
             Legion::JSON.dump(obj)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'apollo.local.graph.encode')
             '{}'
           end
 
@@ -214,7 +289,8 @@ module Legion
             return {} if json_str.nil? || json_str.strip.empty?
 
             Legion::JSON.parse(json_str, symbolize_names: true)
-          rescue StandardError
+          rescue StandardError => e
+            handle_exception(e, level: :debug, operation: 'apollo.local.graph.decode')
             {}
           end
 

@@ -13,6 +13,8 @@ module Legion
     def self.info(_msg) = nil
     def self.debug(_msg) = nil
     def self.warn(_msg) = nil
+    def self.error(_msg) = nil
+    def self.fatal(_msg) = nil
   end
 
   module Settings
@@ -28,6 +30,11 @@ module Legion
 
     def self.[]=(key, val)
       @store[key] = val
+    end
+
+    def self.merge_settings(key, val)
+      current = @store[key] || {}
+      @store[key] = current.merge(val)
     end
   end
 
