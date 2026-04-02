@@ -41,6 +41,13 @@ RSpec.describe 'Apollo::Local ingest' do
     expect(row[:tags]).to eq('["greeting"]')
   end
 
+  it 'normalizes tags before storing them' do
+    Legion::Apollo::Local.ingest(content: 'Bond note', tags: ['Team Bond', 'team bond', 'Bond!'])
+
+    row = db[:local_knowledge].first
+    expect(row[:tags]).to eq('["team_bond","bond_"]')
+  end
+
   it 'deduplicates by content hash' do
     Legion::Apollo::Local.ingest(content: 'same content', tags: %w[a])
     result = Legion::Apollo::Local.ingest(content: 'same content', tags: %w[b])

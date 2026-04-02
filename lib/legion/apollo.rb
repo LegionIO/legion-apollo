@@ -4,6 +4,7 @@ require 'digest'
 require 'legion/logging'
 require_relative 'apollo/version'
 require_relative 'apollo/settings'
+require_relative 'apollo/helpers/tag_normalizer'
 require_relative 'apollo/local'
 require_relative 'apollo/runners'
 require_relative 'apollo/routes'
@@ -68,14 +69,15 @@ module Legion
         return not_started_error unless started?
 
         text = normalize_text_input(text)
+        normalized_tags = normalize_tags_input(tags)
         limit          ||= apollo_setting(:default_limit, 5)
         min_confidence ||= apollo_setting(:min_confidence, 0.3)
         log.info { "Apollo query requested scope=#{scope} text_length=#{text.to_s.length} limit=#{limit}" }
         log.debug do
-          "Apollo query scope=#{scope} limit=#{limit} min_confidence=#{min_confidence} tags=#{Array(tags).size}"
+          "Apollo query scope=#{scope} limit=#{limit} min_confidence=#{min_confidence} tags=#{normalized_tags.size}"
         end
 
-        payload = { text: text, limit: limit, min_confidence: min_confidence, tags: tags, **opts }
+        payload = { text: text, limit: limit, min_confidence: min_confidence, tags: normalized_tags, **opts }
 
         case scope
         when :local then query_local(payload)
@@ -94,7 +96,8 @@ module Legion
       def ingest(content:, tags: [], scope: :global, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
         return not_started_error unless started?
 
-        payload = { content: content, tags: Array(tags).first(apollo_setting(:max_tags, 20)), **opts }
+        normalized_tags = normalize_tags_input(tags)
+        payload = { content: content, tags: normalized_tags, **opts }
         log.info do
           "Apollo ingest requested scope=#{scope} content_length=#{content.to_s.length} " \
             "tags=#{payload[:tags].size} source_channel=#{payload[:source_channel]}"
@@ -476,6 +479,22 @@ module Legion
         else
           value.to_s
         end
+      end
+
+      def normalize_tags_input(tags)
+        Legion::Apollo::Helpers::TagNormalizer.normalize(Array(tags)).first(apollo_max_tags)
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'apollo.normalize_tags_input')
+        Array(tags).map(&:to_s).first(apollo_max_tags)
+      end
+
+      def apollo_max_tags
+        configured = apollo_setting(:max_tags, Legion::Apollo::Helpers::TagNormalizer::MAX_TAGS)
+        limit = configured.nil? ? Legion::Apollo::Helpers::TagNormalizer::MAX_TAGS : configured.to_i
+        [limit, Legion::Apollo::Helpers::TagNormalizer::MAX_TAGS].min
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'apollo.apollo_max_tags')
+        Legion::Apollo::Helpers::TagNormalizer::MAX_TAGS
       end
 
       def extract_text_fragment(value) # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/MethodLength,Metrics/PerceivedComplexity

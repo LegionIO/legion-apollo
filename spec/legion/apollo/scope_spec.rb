@@ -21,6 +21,14 @@ results: [{ id: 1, content: 'local fact', content_hash: 'abc', confidence: 0.8, 
         expect(result[:entries]).to be_an(Array)
         expect(result[:entries].first[:content]).to eq('local fact')
       end
+
+      it 'normalizes query tags before delegating to Local' do
+        described_class.query(text: 'test', tags: ['Team Bond'], scope: :local)
+
+        expect(Legion::Apollo::Local).to have_received(:query).with(
+          hash_including(tags: ['team_bond'])
+        )
+      end
     end
 
     context 'when Local is not started' do

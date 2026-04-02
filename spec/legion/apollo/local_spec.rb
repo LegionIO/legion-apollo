@@ -134,6 +134,14 @@ RSpec.describe Legion::Apollo::Local do
       expect(result[:mode]).to eq(:updated)
     end
 
+    it 'normalizes tags before matching an upserted row' do
+      described_class.upsert(content: 'first', tags: ['Team Bond', 'Extra!'])
+      result = described_class.upsert(content: 'second', tags: %w[team_bond extra_])
+
+      expect(result[:mode]).to eq(:updated)
+      expect(db[:local_knowledge].count).to eq(1)
+    end
+
     it 'refreshes expires_at and embedding metadata when updating an expired row' do
       tags = %w[social_graph reputation agent-123]
       create_result = described_class.upsert(content: 'initial state', tags: tags, source_channel: 'gaia')

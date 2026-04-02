@@ -6,6 +6,7 @@ require 'socket'
 require 'time'
 require_relative 'local/graph'
 require_relative 'helpers/similarity'
+require_relative 'helpers/tag_normalizer'
 
 module Legion
   module Apollo
@@ -47,6 +48,7 @@ module Legion
         def ingest(content:, tags: [], **opts) # rubocop:disable Metrics/MethodLength
           return not_started_error unless started?
 
+          tags = normalize_tags_input(tags)
           WRITE_MUTEX.synchronize do
             ingest_without_lock(content: content, tags: tags, **opts)
           end
@@ -64,7 +66,7 @@ module Legion
         def upsert(content:, tags: [], **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           return not_started_error unless started?
 
-          sorted_tags = Array(tags).map(&:to_s).sort
+          sorted_tags = normalize_tags_input(tags).sort
           tag_json = Legion::JSON.dump(sorted_tags)
           WRITE_MUTEX.synchronize do
             existing = db[:local_knowledge].where(tags: tag_json).first
@@ -92,6 +94,7 @@ module Legion
           return not_started_error unless started?
 
           text = normalize_text_input(text)
+          tags = normalize_tags_input(tags)
           limit ||= local_setting(:default_limit, 5)
           min_confidence ||= local_setting(:min_confidence, 0.3)
           multiplier = local_setting(:fts_candidate_multiplier, 3)
@@ -150,6 +153,7 @@ module Legion
         def query_by_tags(tags:, limit: 50) # rubocop:disable Metrics/MethodLength
           return { success: false, error: :not_started } unless started?
 
+          tags = normalize_tags_input(tags)
           results = query_by_tags_via_sql(tags: tags, limit: limit)
 
           log.info { "Apollo::Local query_by_tags completed tag_count=#{tags.size} count=#{results.size}" }
@@ -168,6 +172,7 @@ module Legion
         def promote_to_global(tags:, min_confidence: 0.6) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
           return { success: false, error: :not_started } unless started?
 
+          tags = normalize_tags_input(tags)
           entries = query_by_tags(tags: tags)
           unless entries[:success] && entries[:results]&.any?
             log.info { "Apollo::Local promote_to_global skipped tag_count=#{tags.size} reason=no_entries" }
@@ -458,7 +463,7 @@ module Legion
         end
 
         def serialized_tags(tags)
-          Legion::JSON.dump(Array(tags).first(local_setting(:max_tags, 20)))
+          Legion::JSON.dump(normalize_tags_input(tags))
         end
 
         def fts_search(text, limit:) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
@@ -564,6 +569,24 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'apollo.local.normalize_text_input')
           value.to_s
+        end
+
+        def normalize_tags_input(tags)
+          Legion::Apollo::Helpers::TagNormalizer.normalize(Array(tags)).first(max_tags_limit)
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'apollo.local.normalize_tags_input')
+          Array(tags).map(&:to_s).first(max_tags_limit)
+        end
+
+        def max_tags_limit
+          configured = if defined?(Legion::Settings) && Legion::Settings[:apollo].is_a?(Hash)
+                         Legion::Settings[:apollo][:max_tags]
+                       end
+          limit = configured.nil? ? Legion::Apollo::Helpers::TagNormalizer::MAX_TAGS : configured.to_i
+          [limit, Legion::Apollo::Helpers::TagNormalizer::MAX_TAGS].min
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'apollo.local.max_tags_limit')
+          Legion::Apollo::Helpers::TagNormalizer::MAX_TAGS
         end
 
         def query_by_tags_via_sql(tags:, limit:) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength

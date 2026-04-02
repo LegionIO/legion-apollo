@@ -64,6 +64,15 @@ RSpec.describe 'Apollo::Local query' do
     expect(result[:results].map { |entry| entry[:content] }).to include('RabbitMQ clustering works by mirroring queues')
   end
 
+  it 'normalizes filter tags for direct callers' do
+    Legion::Apollo::Local.ingest(content: 'Bond state change', tags: ['Team Bond'])
+
+    result = Legion::Apollo::Local.query(text: 'Bond', tags: ['team bond'])
+
+    expect(result[:success]).to be true
+    expect(result[:results].map { |entry| entry[:content] }).to include('Bond state change')
+  end
+
   it 'filters by min_confidence' do
     Legion::Apollo::Local.ingest(content: 'low confidence entry about queues', tags: %w[test], confidence: 0.1)
     result = Legion::Apollo::Local.query(text: 'queues', min_confidence: 0.5)
