@@ -96,7 +96,7 @@ RSpec.describe Legion::Apollo::Routes do
       expect(result[:status]).to eq(200)
       expect(result[:body][:success]).to be true
       expect(Legion::Apollo).to have_received(:query).with(
-        hash_including(text: 'hello', scope: :all, limit: 5, min_confidence: 0.3)
+        hash_including(text: 'hello', scope: :all, limit: 5, min_confidence: nil)
       )
     end
 

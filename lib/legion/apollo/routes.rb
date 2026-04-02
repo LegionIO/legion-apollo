@@ -50,7 +50,7 @@ module Legion
         end
       end
 
-      def self.register_query_route(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+      def self.register_query_route(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity
         app.post '/api/apollo/query' do
           unless apollo_api_available?
             halt 503, json_error('apollo_unavailable', 'apollo is not available', status_code: 503)
@@ -61,7 +61,7 @@ module Legion
           result = Legion::Apollo.query(
             text:           body[:query],
             limit:          body[:limit] || default_limit,
-            min_confidence: body[:min_confidence] || 0.3,
+            min_confidence: body[:min_confidence],
             status:         body[:status] || [:confirmed],
             tags:           body[:tags],
             domain:         body[:domain],

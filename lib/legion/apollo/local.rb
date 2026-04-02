@@ -590,7 +590,7 @@ module Legion
         end
 
         def query_by_tags_via_sql(tags:, limit:) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
-          now = Time.now.utc.iso8601
+          now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
           dataset = db[:local_knowledge].where(Sequel.lit('expires_at > ?', now))
 
           Array(tags).map(&:to_s).each do |tag|
@@ -616,7 +616,7 @@ module Legion
 
         def query_by_tags_via_ruby(tags:, limit:)
           candidates = db[:local_knowledge]
-                       .where { expires_at > Time.now.utc.iso8601 }
+                       .where(Sequel.lit('expires_at > ?', Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')))
                        .all
 
           candidates.select do |row|
