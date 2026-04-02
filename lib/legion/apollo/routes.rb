@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require 'legion/logging'
 require_relative 'helpers/tag_normalizer'
 
 # Self-registering route module for legion-apollo.
@@ -51,33 +52,38 @@ module Legion
 
       def self.register_query_route(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
         app.post '/api/apollo/query' do
-          halt 503, json_error('apollo_unavailable', 'apollo is not available', status_code: 503) unless apollo_loaded?
+          unless apollo_api_available?
+            halt 503, json_error('apollo_unavailable', 'apollo is not available', status_code: 503)
+          end
 
           body = parse_request_body
           default_limit = defined?(Legion::Settings) ? (Legion::Settings[:apollo]&.dig(:default_limit) || 5) : 5
-          result = apollo_runner.handle_query(
-            query:          body[:query],
+          result = Legion::Apollo.query(
+            text:           body[:query],
             limit:          body[:limit] || default_limit,
             min_confidence: body[:min_confidence] || 0.3,
             status:         body[:status] || [:confirmed],
             tags:           body[:tags],
             domain:         body[:domain],
-            agent_id:       body[:agent_id] || 'api'
+            agent_id:       body[:agent_id] || 'api',
+            scope:          normalize_scope(body[:scope])
           )
-          json_response(result)
+          json_response(result, status_code: apollo_status_code(result))
         end
       end
 
       def self.register_ingest_route(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
         app.post '/api/apollo/ingest' do
-          halt 503, json_error('apollo_unavailable', 'apollo is not available', status_code: 503) unless apollo_loaded?
+          unless apollo_api_available?
+            halt 503, json_error('apollo_unavailable', 'apollo is not available', status_code: 503)
+          end
 
           body = parse_request_body
           max_tags = defined?(Legion::Settings) ? (Legion::Settings[:apollo]&.dig(:max_tags) || 20) : 20
           # TagNormalizer hard-caps to MAX_TAGS=20 internally; clamp here to make that limit explicit.
           effective_max_tags = [max_tags, Legion::Apollo::Helpers::TagNormalizer::MAX_TAGS].min
           tags = Legion::Apollo::Helpers::TagNormalizer.normalize(Array(body[:tags])).first(effective_max_tags)
-          result = apollo_runner.handle_ingest(
+          result = Legion::Apollo.ingest(
             content:          body[:content],
             content_type:     body[:content_type] || :observation,
             tags:             tags,
@@ -85,9 +91,10 @@ module Legion
             source_provider:  body[:source_provider],
             source_channel:   body[:source_channel] || 'rest_api',
             knowledge_domain: body[:knowledge_domain],
-            context:          body[:context] || {}
+            context:          body[:context] || {},
+            scope:            normalize_scope(body[:scope])
           )
-          json_response(result, status_code: 201)
+          json_response(result, status_code: apollo_status_code(result, success_status: 201))
         end
       end
 
@@ -148,15 +155,15 @@ module Legion
 
       # Helper methods mixed into the Sinatra app context
       module ApolloHelpers
+        include Legion::Logging::Helper
+
         def apollo_runner_available?
           return false unless defined?(Legion::Extensions::Apollo::Runners::Knowledge)
 
           required = %i[handle_query handle_ingest related_entries]
           required.all? { |m| Legion::Extensions::Apollo::Runners::Knowledge.respond_to?(m) }
         rescue StandardError => e
-          if defined?(Legion::Logging)
-            Legion::Logging.debug("Apollo#apollo_runner_available? check failed: #{e.message}")
-          end
+          handle_exception(e, level: :debug, operation: :apollo_runner_available?)
           false
         end
 
@@ -164,15 +171,43 @@ module Legion
           apollo_runner_available? && apollo_data_connected?
         end
 
+        def apollo_api_available?
+          defined?(Legion::Apollo) && Legion::Apollo.respond_to?(:query) && Legion::Apollo.respond_to?(:ingest)
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: :apollo_api_available?)
+          false
+        end
+
         def apollo_data_connected?
           defined?(Legion::Data) && Legion::Data.respond_to?(:connection) && !Legion::Data.connection.nil?
         rescue StandardError => e
-          Legion::Logging.debug("Apollo#apollo_data_connected? check failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug, operation: :apollo_data_connected?)
           false
         end
 
         def apollo_runner
           Legion::Extensions::Apollo::Runners::Knowledge
+        end
+
+        def normalize_scope(scope)
+          value = scope&.to_sym
+          %i[global local all].include?(value) ? value : :global
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: :normalize_scope)
+          :global
+        end
+
+        def apollo_status_code(result, success_status: 200)
+          return 202 if result[:success] && result[:mode] == :async
+          return success_status if result[:success]
+
+          case result[:error]
+          when :no_path_available, :not_started then 503
+          else 500
+          end
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: :apollo_status_code)
+          500
         end
 
         def apollo_maintenance_runner # rubocop:disable Metrics/MethodLength
@@ -208,7 +243,7 @@ module Legion
 
           apollo_runner.graph_topology
         rescue StandardError => e
-          Legion::Logging.debug("Apollo#apollo_graph_topology failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug, operation: :apollo_graph_topology)
           { error: 'apollo_graph_topology unavailable' }
         end
 
@@ -220,7 +255,7 @@ module Legion
 
           apollo_runner.expertise_map
         rescue StandardError => e
-          Legion::Logging.debug("Apollo#apollo_expertise_map failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug, operation: :apollo_expertise_map)
           { error: 'apollo_expertise_map unavailable' }
         end
 
@@ -233,7 +268,7 @@ module Legion
 
           apollo_runner.stats
         rescue StandardError => e
-          Legion::Logging.debug("Apollo#apollo_stats failed: #{e.message}") if defined?(Legion::Logging)
+          handle_exception(e, level: :debug, operation: :apollo_stats)
           { total_entries: 0, error: 'apollo_stats unavailable' }
         end
       end

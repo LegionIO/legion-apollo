@@ -12,6 +12,8 @@
 - `Apollo.shutdown` now shuts down `Apollo::Local`, and `Apollo::Local.upsert` refreshes expiry and embedding metadata for updated rows
 - `Apollo::Local.hydrate_from_global` now accepts Apollo's `entries` response shape, and `query(scope: :all)` falls back to async global transport when no synchronous backends are available
 - `apollo.enabled` now gates startup, `Apollo::Local.query_by_tags` filters in SQLite before applying limits, and message publish behavior has direct spec coverage
+- Blank local queries now bypass invalid FTS `MATCH ''` calls while still supporting tag-filtered lookups
+- REST query and ingest routes now delegate to `Legion::Apollo`, return `202` for async transport fallback, and stop reporting failed ingests as `201 Created`
 
 ## [0.3.7] - 2026-03-31
 
