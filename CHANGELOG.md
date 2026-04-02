@@ -4,7 +4,7 @@
 
 ### Changed
 - Adopt `Legion::Logging::Helper` across the Apollo core, local store, graph layer, message publishers, and helper modules
-- Require `legion-logging >= 1.4.3` for structured helper-based logging support
+- Require `legion-logging >= 1.5.0` for structured helper-based logging support
 - Remove unused top-level Apollo defaults for transport mode and timeout settings
 
 ### Fixed
