@@ -8,6 +8,7 @@
 
 ### Fixed
 - Start addressing Apollo local lifecycle, merged routing, hydration contract, and route/runtime drift for the 0.4.x line
+- `Apollo.shutdown` now shuts down `Apollo::Local`, and `Apollo::Local.upsert` refreshes expiry and embedding metadata for updated rows
 
 ## [0.3.7] - 2026-03-31
 

@@ -34,10 +34,14 @@ module Legion
       end
 
       def shutdown
+        Legion::Apollo::Local.shutdown if defined?(Legion::Apollo::Local) && Legion::Apollo::Local.started?
+        log.info 'Legion::Apollo shutdown'
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'apollo.shutdown')
+      ensure
         @started = false
         @transport_available = nil
         @data_available = nil
-        log.info 'Legion::Apollo shutdown'
       end
 
       def started?

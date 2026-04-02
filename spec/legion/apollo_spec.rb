@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require 'sequel'
+require 'sequel/extensions/migration'
+
 RSpec.describe Legion::Apollo do
   describe '.start' do
     it 'sets started? to true' do
@@ -19,6 +22,27 @@ RSpec.describe Legion::Apollo do
       described_class.start
       described_class.shutdown
       expect(described_class.started?).to be false
+    end
+
+    it 'shuts down the local store when it is running' do
+      db = Sequel.sqlite
+
+      stub_const('Legion::Data::Local', Module.new do
+        extend self
+
+        define_method(:connected?) { true }
+        define_method(:connection) { db }
+        define_method(:register_migrations) { |**_| nil }
+      end)
+      Sequel::Migrator.run(db, Legion::Apollo::Local::MIGRATION_PATH)
+
+      described_class.start
+      expect(Legion::Apollo::Local.started?).to be true
+
+      described_class.shutdown
+
+      expect(described_class.started?).to be false
+      expect(Legion::Apollo::Local.started?).to be false
     end
   end
 

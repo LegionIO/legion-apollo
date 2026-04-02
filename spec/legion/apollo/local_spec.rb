@@ -133,6 +133,33 @@ RSpec.describe Legion::Apollo::Local do
       result = described_class.upsert(content: 'second', tags: %w[c a b])
       expect(result[:mode]).to eq(:updated)
     end
+
+    it 'refreshes expires_at and embedding metadata when updating an expired row' do
+      tags = %w[social_graph reputation agent-123]
+      create_result = described_class.upsert(content: 'initial state', tags: tags, source_channel: 'gaia')
+      row_id = create_result[:id]
+      expired_at = (Time.now.utc - 3600).strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+      db[:local_knowledge].where(id: row_id).update(expires_at: expired_at, embedding: nil, embedded_at: nil)
+
+      stub_const('Legion::LLM', Module.new do
+        extend self
+
+        define_method(:can_embed?) { true }
+        define_method(:embed) { |_text, **_| { vector: Array.new(8, 0.25), model: 'test' } }
+      end)
+
+      result = described_class.upsert(content: 'refreshed state', tags: tags, source_channel: 'gaia')
+      expect(result).to include(success: true, mode: :updated, id: row_id)
+
+      row = db[:local_knowledge].where(id: row_id).first
+      expect(Time.parse(row[:expires_at])).to be > Time.now.utc
+      expect(row[:embedding]).not_to be_nil
+      expect(row[:embedded_at]).not_to be_nil
+
+      query_result = described_class.query(text: 'refreshed state', tags: tags)
+      expect(query_result[:success]).to be true
+      expect(query_result[:results].map { |entry| entry[:id] }).to include(row_id)
+    end
   end
 
   describe '#seed_self_knowledge' do
@@ -154,7 +181,6 @@ RSpec.describe Legion::Apollo::Local do
     after { described_class.reset! }
 
     it 'ingests the partner seed file' do
-      seed_file = File.join(File.expand_path('../../../data/self-knowledge', __dir__), '11-my-partner.md')
       described_class.seed_self_knowledge
       result = described_class.query(text: 'partner', tags: ['self-knowledge'])
       partner_entries = result[:results].select do |r|

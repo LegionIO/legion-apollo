@@ -499,19 +499,26 @@ module Legion
         end
 
         def update_upsert_entry(existing, content, tags_json, opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+          content = content.to_s
           new_hash = content_hash(content)
+          embedding, embedded_at = generate_embedding(content)
           now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+          expires_at = compute_expires_at
 
           db[:local_knowledge].where(id: existing[:id]).update(
-            content:        content.to_s,
+            content:        content,
             content_hash:   new_hash,
+            tags:           tags_json,
+            embedding:      embedding ? Legion::JSON.dump(embedding) : nil,
+            embedded_at:    embedded_at,
             confidence:     opts.fetch(:confidence, existing[:confidence]),
+            expires_at:     expires_at,
             source_channel: opts.fetch(:source_channel, existing[:source_channel]),
             source_agent:   opts.fetch(:source_agent, existing[:source_agent]),
             submitted_by:   opts.fetch(:submitted_by, existing[:submitted_by]),
             updated_at:     now
           )
-          rebuild_fts_entry(existing[:id], content.to_s, tags_json)
+          rebuild_fts_entry(existing[:id], content, tags_json)
           log.info { "Apollo::Local upsert updated id=#{existing[:id]} hash=#{new_hash}" }
           { success: true, mode: :updated, id: existing[:id] }
         end
