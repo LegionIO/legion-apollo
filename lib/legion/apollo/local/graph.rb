@@ -2,7 +2,6 @@
 
 require 'legion/logging'
 require 'time'
-require 'set'
 
 module Legion
   module Apollo
