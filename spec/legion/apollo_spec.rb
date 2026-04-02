@@ -15,6 +15,14 @@ RSpec.describe Legion::Apollo do
       described_class.start
       expect(described_class.started?).to be true
     end
+
+    it 'does not start when apollo.enabled is false' do
+      Legion::Settings[:apollo][:enabled] = false
+
+      described_class.start
+
+      expect(described_class.started?).to be false
+    end
   end
 
   describe '.shutdown' do
@@ -87,6 +95,17 @@ RSpec.describe Legion::Apollo do
 
         expect(knowledge_runner).to have_received(:handle_query).with(
           hash_including(text: 'test', query: 'test')
+        )
+      end
+
+      it 'flattens structured text blocks before querying' do
+        described_class.query(text: [{ type: 'text', text: 'what tools are available to you?' }])
+
+        expect(knowledge_runner).to have_received(:handle_query).with(
+          hash_including(
+            text:  'what tools are available to you?',
+            query: 'what tools are available to you?'
+          )
         )
       end
     end

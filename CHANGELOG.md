@@ -5,11 +5,13 @@
 ### Changed
 - Adopt `Legion::Logging::Helper` across the Apollo core, local store, graph layer, message publishers, and helper modules
 - Require `legion-logging >= 1.4.3` for structured helper-based logging support
+- Remove unused top-level Apollo defaults for transport mode and timeout settings
 
 ### Fixed
 - Start addressing Apollo local lifecycle, merged routing, hydration contract, and route/runtime drift for the 0.4.x line
 - `Apollo.shutdown` now shuts down `Apollo::Local`, and `Apollo::Local.upsert` refreshes expiry and embedding metadata for updated rows
 - `Apollo::Local.hydrate_from_global` now accepts Apollo's `entries` response shape, and `query(scope: :all)` falls back to async global transport when no synchronous backends are available
+- `apollo.enabled` now gates startup, `Apollo::Local.query_by_tags` filters in SQLite before applying limits, and message publish behavior has direct spec coverage
 
 ## [0.3.7] - 2026-03-31
 

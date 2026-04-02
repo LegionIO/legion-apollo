@@ -17,10 +17,15 @@ module Legion
     class << self # rubocop:disable Metrics/ClassLength
       include Legion::Logging::Helper
 
-      def start
+      def start # rubocop:disable Metrics/MethodLength
         return if @started
 
         merge_settings
+        unless apollo_enabled?
+          log.info 'Apollo start skipped because apollo.enabled is false'
+          return
+        end
+
         detect_transport
         detect_data
 
@@ -55,6 +60,7 @@ module Legion
       def query(text:, limit: nil, min_confidence: nil, tags: nil, scope: :global, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/ParameterLists
         return not_started_error unless started?
 
+        text = normalize_text_input(text)
         limit          ||= apollo_setting(:default_limit, 5)
         min_confidence ||= apollo_setting(:min_confidence, 0.3)
         log.info { "Apollo query requested scope=#{scope} text_length=#{text.to_s.length} limit=#{limit}" }
@@ -157,14 +163,32 @@ module Legion
 
       private
 
-      def merge_settings
+      def merge_settings # rubocop:disable Metrics/MethodLength
         return unless defined?(Legion::Settings)
 
         defaults = Legion::Apollo::Settings.default
-        Legion::Settings.merge_settings(:apollo, defaults)
+        current = Legion::Settings[:apollo]
+        merged = deep_merge_hash(defaults, current.is_a?(Hash) ? current : {})
+
+        if Legion::Settings.respond_to?(:[]=)
+          Legion::Settings[:apollo] = merged
+        elsif Legion::Settings.respond_to?(:merge_settings)
+          Legion::Settings.merge_settings(:apollo, merged)
+        end
+
         log.info 'Apollo settings merged'
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'apollo.merge_settings')
+      end
+
+      def deep_merge_hash(defaults, overrides)
+        defaults.merge(overrides) do |_key, default_value, override_value|
+          if default_value.is_a?(Hash) && override_value.is_a?(Hash)
+            deep_merge_hash(default_value, override_value)
+          else
+            override_value
+          end
+        end
       end
 
       def detect_transport
@@ -321,9 +345,8 @@ module Legion
       end
 
       def normalize_query_payload(payload)
-        return payload if payload.key?(:query)
-
-        payload.merge(query: payload[:text])
+        normalized_text = normalize_text_input(payload[:text] || payload[:query])
+        payload.merge(text: normalized_text, query: normalized_text)
       end
 
       def normalize_local_entries(entries) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
@@ -420,6 +443,56 @@ module Legion
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'apollo.apollo_setting', key: key)
         default
+      end
+
+      def apollo_enabled?
+        return true unless defined?(Legion::Settings) && Legion::Settings[:apollo].is_a?(Hash)
+
+        Legion::Settings[:apollo].fetch(:enabled, true) != false
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'apollo.apollo_enabled')
+        true
+      end
+
+      def normalize_text_input(value) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/MethodLength
+        case value
+        when String
+          value
+        when Array
+          parts = value.filter_map { |entry| extract_text_fragment(entry) }
+          joined = parts.map(&:to_s).map(&:strip).reject(&:empty?).join("\n")
+          joined.empty? ? value.to_s : joined
+        when Hash
+          extract_text_fragment(value).to_s
+        when nil
+          ''
+        else
+          value.to_s
+        end
+      end
+
+      def extract_text_fragment(value) # rubocop:disable Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/MethodLength,Metrics/PerceivedComplexity
+        case value
+        when String
+          value
+        when Array
+          value.filter_map { |entry| extract_text_fragment(entry) }.join("\n")
+        when Hash
+          text = value[:text] || value['text']
+          return text.to_s if text.is_a?(String)
+
+          content = value[:content] || value['content']
+          return extract_text_fragment(content) unless content.nil?
+
+          %i[query prompt message input value summary].each do |key|
+            candidate = value[key] || value[key.to_s]
+            return extract_text_fragment(candidate) unless candidate.nil?
+          end
+
+          value.values.filter_map { |entry| extract_text_fragment(entry) }.join("\n")
+        else
+          value.to_s
+        end
       end
 
       def not_started_error

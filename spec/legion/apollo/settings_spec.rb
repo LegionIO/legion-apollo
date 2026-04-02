@@ -6,6 +6,10 @@ RSpec.describe Legion::Apollo::Settings do
   describe '.default' do
     subject(:defaults) { described_class.default }
 
+    it 'enables apollo by default' do
+      expect(defaults[:enabled]).to be true
+    end
+
     it 'includes local settings' do
       expect(defaults[:local]).to be_a(Hash)
     end
@@ -32,6 +36,12 @@ RSpec.describe Legion::Apollo::Settings do
 
     it 'sets min confidence to 0.3' do
       expect(defaults[:local][:min_confidence]).to eq(0.3)
+    end
+
+    it 'does not expose unused transport and timeout settings' do
+      expect(defaults).not_to have_key(:transport_mode)
+      expect(defaults).not_to have_key(:query_timeout)
+      expect(defaults).not_to have_key(:ingest_timeout)
     end
   end
 end

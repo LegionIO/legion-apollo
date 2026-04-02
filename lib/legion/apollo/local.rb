@@ -114,6 +114,7 @@ module Legion
         def query(text:, limit: nil, min_confidence: nil, tags: nil, **) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           return not_started_error unless started?
 
+          text = normalize_text_input(text)
           limit ||= local_setting(:default_limit, 5)
           min_confidence ||= local_setting(:min_confidence, 0.3)
           multiplier = local_setting(:fts_candidate_multiplier, 3)
@@ -173,18 +174,10 @@ module Legion
           @seeded == true
         end
 
-        def query_by_tags(tags:, limit: 50) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+        def query_by_tags(tags:, limit: 50) # rubocop:disable Metrics/MethodLength
           return { success: false, error: :not_started } unless started?
 
-          candidates = db[:local_knowledge]
-                       .where { expires_at > Time.now.utc.iso8601 }
-                       .limit(limit)
-                       .all
-
-          results = candidates.select do |row|
-            row_tags = parse_tags(row[:tags])
-            tags.all? { |t| row_tags.include?(t) }
-          end
+          results = query_by_tags_via_sql(tags: tags, limit: limit)
 
           log.info { "Apollo::Local query_by_tags completed tag_count=#{tags.size} count=#{results.size}" }
           { success: true, results: results, count: results.size }
@@ -375,6 +368,7 @@ module Legion
             return [nil, nil]
           end
 
+          content = normalize_text_input(content)
           result = Legion::LLM.embed(content)
           vector = result.is_a?(Hash) ? result[:vector] : result
           if vector.is_a?(Array) && vector.any?
@@ -457,6 +451,7 @@ module Legion
         end
 
         def cosine_rerank(text, candidates) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
+          text = normalize_text_input(text)
           query_result = Legion::LLM.embed(text)
           query_vec = query_result.is_a?(Hash) ? query_result[:vector] : query_result
           return candidates unless query_vec.is_a?(Array) && query_vec.any?
@@ -497,6 +492,53 @@ module Legion
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'apollo.local.local_setting', key: key)
           default
+        end
+
+        def normalize_text_input(value)
+          if defined?(Legion::Apollo) && Legion::Apollo.respond_to?(:normalize_text_input, true)
+            return Legion::Apollo.send(:normalize_text_input, value)
+          end
+
+          value.to_s
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'apollo.local.normalize_text_input')
+          value.to_s
+        end
+
+        def query_by_tags_via_sql(tags:, limit:) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+          now = Time.now.utc.iso8601
+          dataset = db[:local_knowledge].where(Sequel.lit('expires_at > ?', now))
+
+          Array(tags).map(&:to_s).each do |tag|
+            dataset = dataset.where(
+              Sequel.lit(
+                'EXISTS (SELECT 1 FROM json_each(local_knowledge.tags) WHERE json_each.value = ?)',
+                tag
+              )
+            )
+          end
+
+          dataset.limit(limit).all
+        rescue StandardError => e
+          handle_exception(
+            e,
+            level:     :debug,
+            operation: 'apollo.local.query_by_tags_via_sql',
+            tag_count: Array(tags).size,
+            limit:     limit
+          )
+          query_by_tags_via_ruby(tags: tags, limit: limit)
+        end
+
+        def query_by_tags_via_ruby(tags:, limit:)
+          candidates = db[:local_knowledge]
+                       .where { expires_at > Time.now.utc.iso8601 }
+                       .all
+
+          candidates.select do |row|
+            row_tags = parse_tags(row[:tags])
+            tags.all? { |tag| row_tags.include?(tag) }
+          end.first(limit)
         end
 
         def update_upsert_entry(existing, content, tags_json, opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
