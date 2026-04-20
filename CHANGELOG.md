@@ -3,11 +3,8 @@
 ## [0.5.0] - 2026-04-18
 
 ### Fixed
-- FTS5 search crashes on punctuation (`.`, `:`, `-`, `+`, etc.) by tokenizing input and quoting each term (#22)
-- Apollo query returns HTTP 500 on non-Postgres backends by improving status code mapping in routes (#23)
-
-### Changed
-- Bump version to 0.5.0
+- FTS5 search crashes on punctuation (`.`, `:`, `-`, `+`, etc.) by tokenizing input into quoted alphanumeric terms with implicit AND semantics; ILIKE fallback now escapes `%` and `_` wildcards (#22)
+- Apollo query returns HTTP 500 on non-Postgres backends: `direct_query` exceptions normalized to `:backend_query_failed` symbol, `apollo_status_code` maps known unavailability symbols to 503 (#23)
 
 ## [0.4.0] - 2026-04-02
 
