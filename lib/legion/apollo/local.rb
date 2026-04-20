@@ -399,8 +399,9 @@ module Legion
             source_agent:   opts[:source_agent],
             submitted_by:   opts[:submitted_by],
             confidence:     opts[:confidence] || default_confidence,
-            is_inference:   is_inference
-          }.merge(embedding_columns(content)).merge(timestamp_columns)
+            is_inference:   is_inference,
+            forget_reason:  opts[:forget_reason]
+          }.merge(embedding_columns(content, opts)).merge(timestamp_columns)
         end
 
         def persist_ingest_row(row)
@@ -453,13 +454,13 @@ module Legion
           log.debug { "Apollo::Local FTS synced id=#{id}" }
         end
 
-        def embedding_columns(content)
+        def embedding_columns(content, opts = {})
           embedding, embedded_at = generate_embedding(content)
 
           {
             embedding:   embedding ? Legion::JSON.dump(embedding) : nil,
             embedded_at: embedded_at,
-            expires_at:  compute_expires_at
+            expires_at:  opts[:expires_at] || compute_expires_at
           }
         end
 
