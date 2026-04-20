@@ -5,6 +5,7 @@ require 'legion/logging'
 require 'socket'
 require 'time'
 require_relative 'local/graph'
+require_relative 'helpers/confidence'
 require_relative 'helpers/similarity'
 require_relative 'helpers/tag_normalizer'
 
@@ -90,7 +91,7 @@ module Legion
           { success: false, error: e.message }
         end
 
-        def query(text:, limit: nil, min_confidence: nil, tags: nil, **) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+        def query(text:, limit: nil, min_confidence: nil, tags: nil, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           return not_started_error unless started?
 
           text = normalize_text_input(text)
@@ -105,7 +106,9 @@ module Legion
           log.debug { "Apollo::Local query limit=#{limit} min_confidence=#{min_confidence} tags=#{Array(tags).size}" }
 
           candidates = fts_search(text, limit: limit * multiplier)
-          candidates = filter_candidates(candidates, min_confidence: min_confidence, tags: tags)
+          include_inferences = opts.fetch(:include_inferences, true)
+          candidates = filter_candidates(candidates, min_confidence: min_confidence, tags: tags,
+                                                     include_inferences: include_inferences)
           candidates = cosine_rerank(text, candidates) if can_rerank?
           results = candidates.first(limit)
 
@@ -386,6 +389,8 @@ module Legion
         end
 
         def build_ingest_row(content:, hash:, tags:, **opts)
+          is_inference = opts[:is_inference] == true
+          default_confidence = is_inference ? Legion::Apollo::Helpers::Confidence::INITIAL_INFERENCE_CONFIDENCE : 1.0
           {
             content:        content,
             content_hash:   hash,
@@ -393,7 +398,8 @@ module Legion
             source_channel: opts[:source_channel],
             source_agent:   opts[:source_agent],
             submitted_by:   opts[:submitted_by],
-            confidence:     opts[:confidence] || 1.0
+            confidence:     opts[:confidence] || default_confidence,
+            is_inference:   is_inference
           }.merge(embedding_columns(content)).merge(timestamp_columns)
         end
 
@@ -499,8 +505,11 @@ module Legion
             .all
         end
 
-        def filter_candidates(candidates, min_confidence:, tags:)
+        def filter_candidates(candidates, min_confidence:, tags:, include_inferences: true)
           candidates = candidates.select { |c| (c[:confidence] || 0) >= min_confidence }
+          unless include_inferences
+            candidates = candidates.reject { |c| c[:is_inference] == 1 || c[:is_inference] == true }
+          end
           if tags && !tags.empty?
             tag_set = Array(tags).map(&:to_s)
             candidates = candidates.select do |c|
