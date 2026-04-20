@@ -467,15 +467,20 @@ module Legion
         end
 
         def fts_search(text, limit:) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+          now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
           if text.to_s.strip.empty?
             return db[:local_knowledge]
-                   .where(Sequel.lit('expires_at > ?', Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')))
+                   .where(Sequel.lit('expires_at > ?', now))
                    .limit(limit)
                    .all
           end
 
-          escaped = text.to_s.gsub('"', '""')
-          now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+          tokens = text.to_s.scan(/[\p{L}\p{N}_]+/)
+          if tokens.empty?
+            return ilike_search(text, now: now, limit: limit)
+          end
+
+          escaped = tokens.map { |t| %("#{t}") }.join(' ')
           db.fetch(
             'SELECT lk.* FROM local_knowledge lk ' \
             'INNER JOIN local_knowledge_fts fts ON lk.id = fts.rowid ' \
@@ -484,9 +489,14 @@ module Legion
           ).all
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'apollo.local.fts_search', limit: limit, fallback: :ilike)
+          ilike_search(text, now: Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ'), limit: limit)
+        end
+
+        def ilike_search(text, now:, limit:)
+          safe_text = text.to_s.gsub('%', '\%').gsub('_', '\_')
           db[:local_knowledge]
-            .where(Sequel.lit('expires_at > ?', Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')))
-            .where(Sequel.ilike(:content, "%#{text}%"))
+            .where(Sequel.lit('expires_at > ?', now))
+            .where(Sequel.ilike(:content, "%#{safe_text}%"))
             .limit(limit)
             .all
         end
