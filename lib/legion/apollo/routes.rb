@@ -50,7 +50,7 @@ module Legion
         end
       end
 
-      def self.register_query_route(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity
+      def self.register_query_route(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
         app.post '/api/apollo/query' do
           unless apollo_api_available?
             halt 503, json_error('apollo_unavailable', 'apollo is not available', status_code: 503)
@@ -59,21 +59,24 @@ module Legion
           body = parse_request_body
           default_limit = defined?(Legion::Settings) ? (Legion::Settings[:apollo]&.dig(:default_limit) || 5) : 5
           result = Legion::Apollo.query(
-            text:           body[:query],
-            limit:          body[:limit] || default_limit,
-            min_confidence: body[:min_confidence],
-            status:         body[:status] || [:confirmed],
-            tags:           body[:tags],
-            domain:         body[:domain],
-            agent_id:       body[:agent_id] || 'api',
-            scope:          normalize_scope(body[:scope])
+            text:               body[:query],
+            limit:              body[:limit] || default_limit,
+            min_confidence:     body[:min_confidence],
+            status:             body[:status] || [:confirmed],
+            tags:               body[:tags],
+            domain:             body[:domain],
+            agent_id:           body[:agent_id] || 'api',
+            scope:              normalize_scope(body[:scope]),
+            tier:               body[:tier]&.to_sym,
+            include_inferences: body.fetch(:include_inferences, true),
+            include_history:    body.fetch(:include_history, false)
           )
           json_response(result, status_code: apollo_status_code(result))
         end
       end
 
       def self.register_ingest_route(app) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
-        app.post '/api/apollo/ingest' do
+        app.post '/api/apollo/ingest' do # rubocop:disable Metrics/BlockLength
           unless apollo_api_available?
             halt 503, json_error('apollo_unavailable', 'apollo is not available', status_code: 503)
           end
@@ -84,15 +87,24 @@ module Legion
           effective_max_tags = [max_tags, Legion::Apollo::Helpers::TagNormalizer::MAX_TAGS].min
           tags = Legion::Apollo::Helpers::TagNormalizer.normalize(Array(body[:tags])).first(effective_max_tags)
           result = Legion::Apollo.ingest(
-            content:          body[:content],
-            content_type:     body[:content_type] || :observation,
-            tags:             tags,
-            source_agent:     body[:source_agent] || 'api',
-            source_provider:  body[:source_provider],
-            source_channel:   body[:source_channel] || 'rest_api',
-            knowledge_domain: body[:knowledge_domain],
-            context:          body[:context] || {},
-            scope:            normalize_scope(body[:scope])
+            content:             body[:content],
+            content_type:        body[:content_type] || :observation,
+            tags:                tags,
+            source_agent:        body[:source_agent] || 'api',
+            source_provider:     body[:source_provider],
+            source_channel:      body[:source_channel] || 'rest_api',
+            knowledge_domain:    body[:knowledge_domain],
+            context:             body[:context] || {},
+            scope:               normalize_scope(body[:scope]),
+            is_inference:        body[:is_inference] == true,
+            forget_reason:       body[:forget_reason],
+            expires_at:          body[:expires_at],
+            parent_knowledge_id: body[:parent_knowledge_id],
+            supersession_type:   body[:supersession_type],
+            source_uri:          body[:source_uri],
+            source_hash:         body[:source_hash],
+            relevance_score:     body[:relevance_score],
+            extraction_method:   body[:extraction_method]
           )
           json_response(result, status_code: apollo_status_code(result, success_status: 201))
         end

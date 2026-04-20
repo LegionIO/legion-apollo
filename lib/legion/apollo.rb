@@ -288,7 +288,8 @@ module Legion
           "Apollo query using local store text_length=#{payload[:text].to_s.length} " \
             "limit=#{payload[:limit]}"
         end
-        result = Legion::Apollo::Local.query(**payload.slice(:text, :limit, :min_confidence, :tags))
+        result = Legion::Apollo::Local.query(**payload.slice(:text, :limit, :min_confidence, :tags,
+                                                             :tier, :include_inferences, :include_history))
         return result unless result[:success]
 
         entries = normalize_local_entries(Array(result[:results]))
@@ -322,7 +323,8 @@ module Legion
 
         if Legion::Apollo::Local.started?
           attempted = true
-          local = Legion::Apollo::Local.query(**payload.slice(:text, :limit, :min_confidence, :tags))
+          local = Legion::Apollo::Local.query(**payload.slice(:text, :limit, :min_confidence, :tags,
+                                                              :tier, :include_inferences, :include_history))
           if local[:success]
             any_success = true
             entries.concat(normalize_local_entries(Array(local[:results]))) if local[:results]
