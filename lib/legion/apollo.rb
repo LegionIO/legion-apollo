@@ -247,7 +247,7 @@ module Legion
         Legion::Extensions::Apollo::Runners::Knowledge.handle_query(**normalize_query_payload(payload))
       rescue StandardError => e
         handle_exception(e, level: :error, operation: 'apollo.direct_query', payload_keys: payload.keys)
-        { success: false, error: e.message }
+        { success: false, error: :backend_query_failed, detail: e.message }
       end
 
       def direct_ingest(payload)
