@@ -2,6 +2,7 @@
 
 require 'digest'
 require 'legion/logging'
+require 'set'
 require 'socket'
 require 'time'
 require_relative 'local/graph'
@@ -107,8 +108,10 @@ module Legion
 
           candidates = fts_search(text, limit: limit * multiplier)
           include_inferences = opts.fetch(:include_inferences, true)
+          include_history = opts.fetch(:include_history, false)
           candidates = filter_candidates(candidates, min_confidence: min_confidence, tags: tags,
-                                                     include_inferences: include_inferences)
+                                                     include_inferences: include_inferences,
+                                                     include_history: include_history)
           candidates = cosine_rerank(text, candidates) if can_rerank?
           results = candidates.first(limit)
 
@@ -223,6 +226,31 @@ module Legion
           HYDRATION_MUTEX.synchronize { hydrate_from_global_without_lock }
         rescue StandardError => e
           handle_exception(e, level: :error, operation: 'apollo.local.hydrate_from_global')
+          { success: false, error: e.message }
+        end
+
+        def version_chain(entry_id:, max_depth: 50) # rubocop:disable Metrics/MethodLength
+          return not_started_error unless started?
+
+          chain = []
+          current_id = entry_id
+          seen = Set.new
+
+          max_depth.times do
+            break unless current_id
+            break if seen.include?(current_id)
+
+            seen.add(current_id)
+            row = db[:local_knowledge].where(id: current_id).first
+            break unless row
+
+            chain << row
+            current_id = row[:parent_knowledge_id]
+          end
+
+          { success: true, chain: chain, count: chain.size }
+        rescue StandardError => e
+          handle_exception(e, level: :error, operation: 'apollo.local.version_chain', entry_id: entry_id)
           { success: false, error: e.message }
         end
 
@@ -379,6 +407,7 @@ module Legion
 
           row = build_ingest_row(content: content, hash: hash, tags: tags, **opts)
           id = persist_ingest_row(row)
+          mark_parent_superseded(opts[:parent_knowledge_id]) if opts[:parent_knowledge_id]
 
           log.info { "Apollo::Local ingest stored id=#{id} hash=#{hash}" }
           { success: true, mode: :local, id: id }
@@ -398,9 +427,11 @@ module Legion
             source_channel: opts[:source_channel],
             source_agent:   opts[:source_agent],
             submitted_by:   opts[:submitted_by],
-            confidence:     opts[:confidence] || default_confidence,
-            is_inference:   is_inference,
-            forget_reason:  opts[:forget_reason]
+            confidence:          opts[:confidence] || default_confidence,
+            is_inference:        is_inference,
+            forget_reason:       opts[:forget_reason],
+            parent_knowledge_id: opts[:parent_knowledge_id],
+            supersession_type:   opts[:supersession_type]
           }.merge(embedding_columns(content, opts)).merge(timestamp_columns)
         end
 
@@ -415,6 +446,15 @@ module Legion
         def deduplicated_ingest(hash)
           log.info { "Apollo::Local ingest deduplicated hash=#{hash}" }
           { success: true, mode: :deduplicated }
+        end
+
+        def mark_parent_superseded(parent_id)
+          return unless parent_id
+
+          db[:local_knowledge].where(id: parent_id).update(is_latest: false)
+          log.info { "Apollo::Local marked entry id=#{parent_id} as superseded" }
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'apollo.local.mark_parent_superseded', parent_id: parent_id)
         end
 
         def generate_embedding(content) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
@@ -506,10 +546,13 @@ module Legion
             .all
         end
 
-        def filter_candidates(candidates, min_confidence:, tags:, include_inferences: true)
+        def filter_candidates(candidates, min_confidence:, tags:, include_inferences: true, include_history: false) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/MethodLength
           candidates = candidates.select { |c| (c[:confidence] || 0) >= min_confidence }
           unless include_inferences
             candidates = candidates.reject { |c| c[:is_inference] == 1 || c[:is_inference] == true }
+          end
+          unless include_history
+            candidates = candidates.select { |c| c[:is_latest].nil? || c[:is_latest] == 1 || c[:is_latest] == true }
           end
           if tags && !tags.empty?
             tag_set = Array(tags).map(&:to_s)

@@ -11,7 +11,7 @@ module Legion
       # Relationships are directional typed edges between two entities.
       # Graph traversal expands one frontier batch per depth to avoid per-node queries.
       module Graph # rubocop:disable Metrics/ModuleLength
-        VALID_RELATION_TYPES = %w[AFFECTS OWNED_BY DEPENDS_ON RELATED_TO].freeze
+        VALID_RELATION_TYPES = %w[AFFECTS OWNED_BY DEPENDS_ON RELATED_TO SUPERSEDES].freeze
 
         class << self # rubocop:disable Metrics/ClassLength
           include Legion::Logging::Helper
