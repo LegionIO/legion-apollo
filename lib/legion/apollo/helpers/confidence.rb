@@ -17,6 +17,7 @@ module Legion
         WRITE_GATE_THRESHOLD   = 0.3
         HIGH_CONFIDENCE        = 0.8
         ARCHIVE_THRESHOLD      = 0.1
+        INITIAL_INFERENCE_CONFIDENCE = 0.35
 
         STATUSES = %i[pending confirmed disputed deprecated archived].freeze
 
