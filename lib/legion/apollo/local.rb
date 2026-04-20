@@ -5,6 +5,7 @@ require 'legion/logging'
 require 'socket'
 require 'time'
 require_relative 'local/graph'
+require_relative 'helpers/confidence'
 require_relative 'helpers/similarity'
 require_relative 'helpers/tag_normalizer'
 
@@ -90,7 +91,7 @@ module Legion
           { success: false, error: e.message }
         end
 
-        def query(text:, limit: nil, min_confidence: nil, tags: nil, **) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+        def query(text:, limit: nil, min_confidence: nil, tags: nil, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity
           return not_started_error unless started?
 
           text = normalize_text_input(text)
@@ -105,12 +106,19 @@ module Legion
           log.debug { "Apollo::Local query limit=#{limit} min_confidence=#{min_confidence} tags=#{Array(tags).size}" }
 
           candidates = fts_search(text, limit: limit * multiplier)
-          candidates = filter_candidates(candidates, min_confidence: min_confidence, tags: tags)
+          include_inferences = opts.fetch(:include_inferences, true)
+          include_history = opts.fetch(:include_history, false)
+          candidates = filter_candidates(candidates, min_confidence: min_confidence, tags: tags,
+                                                     include_inferences: include_inferences,
+                                                     include_history: include_history)
           candidates = cosine_rerank(text, candidates) if can_rerank?
           results = candidates.first(limit)
 
+          tier = opts[:tier]
+          results = results.map { |r| project_tier(r, tier) } if tier
+
           log.info { "Apollo::Local query completed count=#{results.size}" }
-          { success: true, results: results, count: results.size, mode: :local }
+          { success: true, results: results, count: results.size, mode: :local, tier: tier }
         rescue StandardError => e
           handle_exception(
             e,
@@ -220,6 +228,41 @@ module Legion
           HYDRATION_MUTEX.synchronize { hydrate_from_global_without_lock }
         rescue StandardError => e
           handle_exception(e, level: :error, operation: 'apollo.local.hydrate_from_global')
+          { success: false, error: e.message }
+        end
+
+        def version_chain(entry_id:, max_depth: 50) # rubocop:disable Metrics/MethodLength
+          return not_started_error unless started?
+
+          chain = []
+          current_id = entry_id
+          seen = Set.new
+
+          max_depth.times do
+            break unless current_id
+            break if seen.include?(current_id)
+
+            seen.add(current_id)
+            row = db[:local_knowledge].where(id: current_id).first
+            break unless row
+
+            chain << row
+            current_id = row[:parent_knowledge_id]
+          end
+
+          { success: true, chain: chain, count: chain.size }
+        rescue StandardError => e
+          handle_exception(e, level: :error, operation: 'apollo.local.version_chain', entry_id: entry_id)
+          { success: false, error: e.message }
+        end
+
+        def source_links_for(entry_id:)
+          return not_started_error unless started?
+
+          links = db[:local_source_links].where(entry_id: entry_id).all
+          { success: true, links: links, count: links.size }
+        rescue StandardError => e
+          handle_exception(e, level: :error, operation: 'apollo.local.source_links_for', entry_id: entry_id)
           { success: false, error: e.message }
         end
 
@@ -375,7 +418,8 @@ module Legion
           log.debug { "Apollo::Local ingest hash=#{hash} tags=#{Array(tags).size} source_channel=#{opts[:source_channel]}" }
 
           row = build_ingest_row(content: content, hash: hash, tags: tags, **opts)
-          id = persist_ingest_row(row)
+          id = persist_ingest_row(row, opts)
+          mark_parent_superseded(opts[:parent_knowledge_id]) if opts[:parent_knowledge_id]
 
           log.info { "Apollo::Local ingest stored id=#{id} hash=#{hash}" }
           { success: true, mode: :local, id: id }
@@ -385,29 +429,58 @@ module Legion
           deduplicated_ingest(hash)
         end
 
-        def build_ingest_row(content:, hash:, tags:, **opts)
+        def build_ingest_row(content:, hash:, tags:, **opts) # rubocop:disable Metrics/MethodLength
+          is_inference = opts[:is_inference] == true
+          default_confidence = is_inference ? Legion::Apollo::Helpers::Confidence::INITIAL_INFERENCE_CONFIDENCE : 1.0
           {
-            content:        content,
-            content_hash:   hash,
-            tags:           serialized_tags(tags),
-            source_channel: opts[:source_channel],
-            source_agent:   opts[:source_agent],
-            submitted_by:   opts[:submitted_by],
-            confidence:     opts[:confidence] || 1.0
-          }.merge(embedding_columns(content)).merge(timestamp_columns)
+            content:             content,
+            content_hash:        hash,
+            tags:                serialized_tags(tags),
+            source_channel:      opts[:source_channel],
+            source_agent:        opts[:source_agent],
+            submitted_by:        opts[:submitted_by],
+            confidence:          opts[:confidence] || default_confidence,
+            is_inference:        is_inference,
+            forget_reason:       opts[:forget_reason],
+            parent_knowledge_id: opts[:parent_knowledge_id],
+            supersession_type:   opts[:supersession_type]
+          }.merge(embedding_columns(content, opts)).merge(timestamp_columns)
         end
 
-        def persist_ingest_row(row)
+        def persist_ingest_row(row, opts = {})
           db.transaction do
             id = db[:local_knowledge].insert(row)
             sync_fts!(id, row[:content], row[:tags])
+            create_source_link(id, opts) if opts[:source_uri]
             id
           end
+        end
+
+        def create_source_link(entry_id, opts)
+          db[:local_source_links].insert(
+            entry_id:          entry_id,
+            source_uri:        opts[:source_uri],
+            source_hash:       opts[:source_hash],
+            relevance_score:   opts[:relevance_score] || 1.0,
+            extraction_method: opts[:extraction_method],
+            created_at:        Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+          )
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'apollo.local.create_source_link', entry_id: entry_id)
         end
 
         def deduplicated_ingest(hash)
           log.info { "Apollo::Local ingest deduplicated hash=#{hash}" }
           { success: true, mode: :deduplicated }
+        end
+
+        def mark_parent_superseded(parent_id)
+          return unless parent_id
+
+          db[:local_knowledge].where(id: parent_id).update(is_latest: false)
+          log.info { "Apollo::Local marked entry id=#{parent_id} as superseded" }
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'apollo.local.mark_parent_superseded', parent_id: parent_id)
         end
 
         def generate_embedding(content) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
@@ -447,13 +520,13 @@ module Legion
           log.debug { "Apollo::Local FTS synced id=#{id}" }
         end
 
-        def embedding_columns(content)
+        def embedding_columns(content, opts = {})
           embedding, embedded_at = generate_embedding(content)
 
           {
             embedding:   embedding ? Legion::JSON.dump(embedding) : nil,
             embedded_at: embedded_at,
-            expires_at:  compute_expires_at
+            expires_at:  opts[:expires_at] || compute_expires_at
           }
         end
 
@@ -467,15 +540,18 @@ module Legion
         end
 
         def fts_search(text, limit:) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+          now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
           if text.to_s.strip.empty?
             return db[:local_knowledge]
-                   .where(Sequel.lit('expires_at > ?', Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')))
+                   .where(Sequel.lit('expires_at > ?', now))
                    .limit(limit)
                    .all
           end
 
-          escaped = text.to_s.gsub('"', '""')
-          now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+          tokens = text.to_s.scan(/[\p{L}\p{N}_]+/)
+          return ilike_search(text, now: now, limit: limit) if tokens.empty?
+
+          escaped = tokens.map { |t| %("#{t}") }.join(' ')
           db.fetch(
             'SELECT lk.* FROM local_knowledge lk ' \
             'INNER JOIN local_knowledge_fts fts ON lk.id = fts.rowid ' \
@@ -484,15 +560,24 @@ module Legion
           ).all
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: 'apollo.local.fts_search', limit: limit, fallback: :ilike)
+          ilike_search(text, now: Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ'), limit: limit)
+        end
+
+        def ilike_search(text, now:, limit:)
+          safe_text = text.to_s.gsub('\\', '\\\\\\\\').gsub('%', '\%').gsub('_', '\_')
           db[:local_knowledge]
-            .where(Sequel.lit('expires_at > ?', Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')))
-            .where(Sequel.ilike(:content, "%#{text}%"))
+            .where(Sequel.lit('expires_at > ?', now))
+            .where(Sequel.lit("content LIKE ? ESCAPE '\\' COLLATE NOCASE", "%#{safe_text}%"))
             .limit(limit)
             .all
         end
 
-        def filter_candidates(candidates, min_confidence:, tags:)
+        def filter_candidates(candidates, min_confidence:, tags:, include_inferences: true, include_history: false) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/MethodLength,Metrics/AbcSize
           candidates = candidates.select { |c| (c[:confidence] || 0) >= min_confidence }
+          candidates = candidates.reject { |c| [1, true].include?(c[:is_inference]) } unless include_inferences
+          unless include_history
+            candidates = candidates.select { |c| c[:is_latest].nil? || c[:is_latest] == 1 || c[:is_latest] == true }
+          end
           if tags && !tags.empty?
             tag_set = Array(tags).map(&:to_s)
             candidates = candidates.select do |c|
@@ -656,6 +741,21 @@ module Legion
           db.run("DELETE FROM local_knowledge_fts WHERE rowid = #{id}")
           sync_fts!(id, content, tags_json)
           log.debug { "Apollo::Local FTS rebuilt id=#{id}" }
+        end
+
+        def project_tier(entry, tier) # rubocop:disable Metrics/MethodLength
+          case tier
+          when :l0
+            entry.slice(:id, :content_hash, :confidence, :tags, :source_channel, :is_inference, :is_latest).merge(
+              summary: entry[:summary_l0] || entry[:content]&.slice(0, 200)
+            )
+          when :l1
+            entry.slice(:id, :content_hash, :confidence, :tags, :source_channel, :is_inference, :is_latest).merge(
+              summary: entry[:summary_l1] || entry[:content]&.slice(0, 1000)
+            )
+          else
+            entry
+          end
         end
 
         def not_started_error

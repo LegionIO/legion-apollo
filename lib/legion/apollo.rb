@@ -247,7 +247,7 @@ module Legion
         Legion::Extensions::Apollo::Runners::Knowledge.handle_query(**normalize_query_payload(payload))
       rescue StandardError => e
         handle_exception(e, level: :error, operation: 'apollo.direct_query', payload_keys: payload.keys)
-        { success: false, error: e.message }
+        { success: false, error: :backend_query_failed, detail: e.message }
       end
 
       def direct_ingest(payload)
@@ -288,7 +288,8 @@ module Legion
           "Apollo query using local store text_length=#{payload[:text].to_s.length} " \
             "limit=#{payload[:limit]}"
         end
-        result = Legion::Apollo::Local.query(**payload.slice(:text, :limit, :min_confidence, :tags))
+        result = Legion::Apollo::Local.query(**payload.slice(:text, :limit, :min_confidence, :tags,
+                                                             :tier, :include_inferences, :include_history))
         return result unless result[:success]
 
         entries = normalize_local_entries(Array(result[:results]))
@@ -322,7 +323,8 @@ module Legion
 
         if Legion::Apollo::Local.started?
           attempted = true
-          local = Legion::Apollo::Local.query(**payload.slice(:text, :limit, :min_confidence, :tags))
+          local = Legion::Apollo::Local.query(**payload.slice(:text, :limit, :min_confidence, :tags,
+                                                              :tier, :include_inferences, :include_history))
           if local[:success]
             any_success = true
             entries.concat(normalize_local_entries(Array(local[:results]))) if local[:results]
@@ -341,6 +343,9 @@ module Legion
         return { success: false, error: :no_path_available } unless attempted
 
         unless any_success
+          symbol_errors = errors.compact.grep(Symbol).uniq
+          return { success: false, error: symbol_errors.first } if symbol_errors.size == 1
+
           combined_error = errors.compact.map(&:to_s).reject(&:empty?).join('; ')
           combined_error = :upstream_query_failed if combined_error.empty?
           return { success: false, error: combined_error }

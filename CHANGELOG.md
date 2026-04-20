@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.5.0] - 2026-04-18
+
+### Added
+- Migration 004: versioning, tiers, inference, expiry metadata, and source linkage columns on `local_knowledge`; `local_source_links` table (#6-#11)
+- Inference tagging: `is_inference` flag on ingest, `include_inferences:` filter on query, `INITIAL_INFERENCE_CONFIDENCE` (0.35) for LLM-derived entries (#9)
+- Temporal expiry metadata: `forget_reason` and custom `expires_at` on ingest (#8)
+- Versioned knowledge: `parent_knowledge_id`/`is_latest`/`supersession_type` on ingest, automatic parent supersession, `version_chain` traversal, `include_history:` query filter (#7)
+- L0/L1/L2 tiered retrieval: `tier:` parameter on query with summary projection and truncation fallback (#6)
+- Source-to-fact linkage: `source_uri`/`source_hash`/`relevance_score`/`extraction_method` on ingest, `source_links_for` query method, `local_source_links` table (#10)
+- `SUPERSEDES` relation type in `Local::Graph` (#11)
+- Versioning and expiry settings defaults
+
+### Fixed
+- FTS5 search crashes on punctuation (`.`, `:`, `-`, `+`, etc.) by tokenizing input into quoted alphanumeric terms with implicit AND semantics; ILIKE fallback now escapes `%` and `_` wildcards (#22)
+- Apollo query returns HTTP 500 on non-Postgres backends: `direct_query` exceptions normalized to `:backend_query_failed` symbol, `apollo_status_code` maps known unavailability symbols to 503 (#23)
+
 ## [0.4.0] - 2026-04-02
 
 ### Changed
