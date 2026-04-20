@@ -564,10 +564,10 @@ module Legion
         end
 
         def ilike_search(text, now:, limit:)
-          safe_text = text.to_s.gsub('%', '\%').gsub('_', '\_')
+          safe_text = text.to_s.gsub('\\', '\\\\\\\\').gsub('%', '\%').gsub('_', '\_')
           db[:local_knowledge]
             .where(Sequel.lit('expires_at > ?', now))
-            .where(Sequel.ilike(:content, "%#{safe_text}%"))
+            .where(Sequel.lit("content LIKE ? ESCAPE '\\' COLLATE NOCASE", "%#{safe_text}%"))
             .limit(limit)
             .all
         end

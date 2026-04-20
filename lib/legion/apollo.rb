@@ -343,6 +343,9 @@ module Legion
         return { success: false, error: :no_path_available } unless attempted
 
         unless any_success
+          symbol_errors = errors.compact.grep(Symbol).uniq
+          return { success: false, error: symbol_errors.first } if symbol_errors.size == 1
+
           combined_error = errors.compact.map(&:to_s).reject(&:empty?).join('; ')
           combined_error = :upstream_query_failed if combined_error.empty?
           return { success: false, error: combined_error }
