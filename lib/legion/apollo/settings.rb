@@ -29,9 +29,9 @@ module Legion
 
       def self.versioning_defaults
         {
-          enabled:                  true,
-          supersession_threshold:   0.85,
-          max_chain_depth:          50
+          enabled:                true,
+          supersession_threshold: 0.85,
+          max_chain_depth:        50
         }
       end
 

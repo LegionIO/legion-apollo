@@ -2,7 +2,6 @@
 
 require 'digest'
 require 'legion/logging'
-require 'set'
 require 'socket'
 require 'time'
 require_relative 'local/graph'
@@ -92,7 +91,7 @@ module Legion
           { success: false, error: e.message }
         end
 
-        def query(text:, limit: nil, min_confidence: nil, tags: nil, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+        def query(text:, limit: nil, min_confidence: nil, tags: nil, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity
           return not_started_error unless started?
 
           text = normalize_text_input(text)
@@ -430,16 +429,16 @@ module Legion
           deduplicated_ingest(hash)
         end
 
-        def build_ingest_row(content:, hash:, tags:, **opts)
+        def build_ingest_row(content:, hash:, tags:, **opts) # rubocop:disable Metrics/MethodLength
           is_inference = opts[:is_inference] == true
           default_confidence = is_inference ? Legion::Apollo::Helpers::Confidence::INITIAL_INFERENCE_CONFIDENCE : 1.0
           {
-            content:        content,
-            content_hash:   hash,
-            tags:           serialized_tags(tags),
-            source_channel: opts[:source_channel],
-            source_agent:   opts[:source_agent],
-            submitted_by:   opts[:submitted_by],
+            content:             content,
+            content_hash:        hash,
+            tags:                serialized_tags(tags),
+            source_channel:      opts[:source_channel],
+            source_agent:        opts[:source_agent],
+            submitted_by:        opts[:submitted_by],
             confidence:          opts[:confidence] || default_confidence,
             is_inference:        is_inference,
             forget_reason:       opts[:forget_reason],
@@ -573,11 +572,9 @@ module Legion
             .all
         end
 
-        def filter_candidates(candidates, min_confidence:, tags:, include_inferences: true, include_history: false) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/MethodLength
+        def filter_candidates(candidates, min_confidence:, tags:, include_inferences: true, include_history: false) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/MethodLength,Metrics/AbcSize
           candidates = candidates.select { |c| (c[:confidence] || 0) >= min_confidence }
-          unless include_inferences
-            candidates = candidates.reject { |c| c[:is_inference] == 1 || c[:is_inference] == true }
-          end
+          candidates = candidates.reject { |c| [1, true].include?(c[:is_inference]) } unless include_inferences
           unless include_history
             candidates = candidates.select { |c| c[:is_latest].nil? || c[:is_latest] == 1 || c[:is_latest] == true }
           end
@@ -746,7 +743,7 @@ module Legion
           log.debug { "Apollo::Local FTS rebuilt id=#{id}" }
         end
 
-        def project_tier(entry, tier)
+        def project_tier(entry, tier) # rubocop:disable Metrics/MethodLength
           case tier
           when :l0
             entry.slice(:id, :content_hash, :confidence, :tags, :source_channel, :is_inference, :is_latest).merge(
