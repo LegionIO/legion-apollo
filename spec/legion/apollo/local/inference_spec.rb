@@ -16,6 +16,7 @@ RSpec.describe 'Apollo::Local inference tagging' do
 
     stub_const('Legion::Data::Local', Module.new do
       extend self
+
       define_method(:connected?) { true }
       define_method(:connection) { local_db }
       define_method(:register_migrations) { |**_| nil }
@@ -45,7 +46,8 @@ RSpec.describe 'Apollo::Local inference tagging' do
   end
 
   it 'respects explicit confidence even for inferences' do
-    Legion::Apollo::Local.ingest(content: 'High confidence inference', tags: %w[ai], is_inference: true, confidence: 0.8)
+    Legion::Apollo::Local.ingest(content: 'High confidence inference', tags: %w[ai], is_inference: true,
+                                 confidence: 0.8)
     row = db[:local_knowledge].where(content: 'High confidence inference').first
     expect(row[:confidence]).to eq(0.8)
   end

@@ -16,6 +16,7 @@ RSpec.describe 'Apollo::Local temporal expiry metadata' do
 
     stub_const('Legion::Data::Local', Module.new do
       extend self
+
       define_method(:connected?) { true }
       define_method(:connection) { local_db }
       define_method(:register_migrations) { |**_| nil }
@@ -28,8 +29,8 @@ RSpec.describe 'Apollo::Local temporal expiry metadata' do
 
   it 'stores forget_reason on ingest' do
     Legion::Apollo::Local.ingest(
-      content: 'Deployment freeze until June',
-      tags: %w[policy],
+      content:       'Deployment freeze until June',
+      tags:          %w[policy],
       forget_reason: 'policy: deployment freeze window ends'
     )
     row = db[:local_knowledge].where(content: 'Deployment freeze until June').first
@@ -39,9 +40,9 @@ RSpec.describe 'Apollo::Local temporal expiry metadata' do
   it 'stores custom expires_at on ingest' do
     future = (Time.now.utc + 86_400).strftime('%Y-%m-%dT%H:%M:%S.%LZ')
     Legion::Apollo::Local.ingest(
-      content: 'Short-lived policy note',
-      tags: %w[policy],
-      expires_at: future,
+      content:       'Short-lived policy note',
+      tags:          %w[policy],
+      expires_at:    future,
       forget_reason: 'policy: 24h window'
     )
     row = db[:local_knowledge].where(content: 'Short-lived policy note').first

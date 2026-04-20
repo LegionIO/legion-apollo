@@ -1,0 +1,61 @@
+[
+  {
+    "file_path": "./spec/legion/apollo/local/fts_escaping_spec.rb",
+    "line_number": 52,
+    "full_description": "Apollo::Local FTS5 escaping handles hyphens in query text and finds relevant content",
+    "status": "failed",
+    "exception": {
+      "class": "RSpec::Expectations::ExpectationNotMetError",
+      "message": "expected `[].empty?` to be falsey, got true",
+      "backtrace": [
+        "./spec/legion/apollo/local/fts_escaping_spec.rb:55:in 'block (2 levels) in <top (required)>'"
+      ]
+    }
+  },
+  {
+    "file_path": "./spec/legion/apollo/local/fts_escaping_spec.rb",
+    "line_number": 65,
+    "full_description": "Apollo::Local FTS5 escaping handles URLs in query text and finds relevant content",
+    "status": "failed",
+    "exception": {
+      "class": "RSpec::Expectations::ExpectationNotMetError",
+      "message": "expected `[].empty?` to be falsey, got true",
+      "backtrace": [
+        "./spec/legion/apollo/local/fts_escaping_spec.rb:68:in 'block (2 levels) in <top (required)>'"
+      ]
+    }
+  },
+  {
+    "file_path": "./spec/legion/apollo/local/fts_escaping_spec.rb",
+    "line_number": 78,
+    "full_description": "Apollo::Local FTS5 escaping handles parentheses in query text",
+    "status": "failed",
+    "exception": {
+      "class": "RSpec::Expectations::ExpectationNotMetError",
+      "message": "expected `[].empty?` to be falsey, got true",
+      "backtrace": [
+        "./spec/legion/apollo/local/fts_escaping_spec.rb:81:in 'block (2 levels) in <top (required)>'"
+      ]
+    }
+  },
+  {
+    "file_path": "./spec/legion/apollo/local/fts_escaping_spec.rb",
+    "line_number": 84,
+    "full_description": "Apollo::Local FTS5 escaping uses FTS path without falling back to ILIKE for punctuated input",
+    "status": "failed",
+    "exception": {
+      "class": "RSpec::Mocks::MockExpectationError",
+      "message": "(Legion::Apollo::Local).handle_exception(#<Sequel::DatabaseError: SQLite3::SQLException: fts5: syntax error near \".\">, {fallback: :ilike, level: :debug, limit: 15, operation: \"apollo.local.fts_search\"})\n    expected: 0 times with arguments: (anything, hash_including(fallback: :ilike))\n    received: 1 time with arguments: (#<Sequel::DatabaseError: SQLite3::SQLException: fts5: syntax error near \".\">, {fallback: :ilike, level: :debug, limit: 15, operation: \"apollo.local.fts_search\"})",
+      "backtrace": [
+        "./lib/legion/apollo/local.rb:486:in 'Legion::Apollo::Local.fts_search'",
+        "./lib/legion/apollo/local.rb:107:in 'Legion::Apollo::Local.query'",
+        "./spec/legion/apollo/local/fts_escaping_spec.rb:88:in 'block (2 levels) in <top (required)>'",
+        "------------------",
+        "--- Caused by: ---",
+        "SQLite3::SQLException:",
+        "  fts5: syntax error near \".\"",
+        "  ./lib/legion/apollo/local.rb:484:in 'Legion::Apollo::Local.fts_search'"
+      ]
+    }
+  }
+]

@@ -19,6 +19,7 @@ RSpec.describe 'Apollo::Local tiered retrieval' do
 
     stub_const('Legion::Data::Local', Module.new do
       extend self
+
       define_method(:connected?) { true }
       define_method(:connection) { local_db }
       define_method(:register_migrations) { |**_| nil }
@@ -30,9 +31,9 @@ RSpec.describe 'Apollo::Local tiered retrieval' do
 
     now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
     local_db[:local_knowledge].where(content: alpha_content).update(
-      summary_l0: 'Short summary',
-      summary_l1: 'Medium paragraph summary of the content',
-      knowledge_tier: 'L0',
+      summary_l0:      'Short summary',
+      summary_l1:      'Medium paragraph summary of the content',
+      knowledge_tier:  'L0',
       l0_generated_at: now,
       l1_generated_at: now
     )

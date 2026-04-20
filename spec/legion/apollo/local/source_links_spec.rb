@@ -16,6 +16,7 @@ RSpec.describe 'Apollo::Local source linkage' do
 
     stub_const('Legion::Data::Local', Module.new do
       extend self
+
       define_method(:connected?) { true }
       define_method(:connection) { local_db }
       define_method(:register_migrations) { |**_| nil }
@@ -28,11 +29,11 @@ RSpec.describe 'Apollo::Local source linkage' do
 
   it 'stores source link on ingest when source metadata provided' do
     result = Legion::Apollo::Local.ingest(
-      content: 'Extracted fact from wiki',
-      tags: %w[wiki],
-      source_uri: 'https://wiki.example.com/page',
-      source_hash: 'abc123',
-      relevance_score: 0.95,
+      content:           'Extracted fact from wiki',
+      tags:              %w[wiki],
+      source_uri:        'https://wiki.example.com/page',
+      source_hash:       'abc123',
+      relevance_score:   0.95,
       extraction_method: 'ner'
     )
     links = db[:local_source_links].where(entry_id: result[:id]).all
@@ -50,9 +51,9 @@ RSpec.describe 'Apollo::Local source linkage' do
 
   it 'source_links_for returns links for an entry' do
     result = Legion::Apollo::Local.ingest(
-      content: 'Linked fact',
-      tags: %w[linked],
-      source_uri: 'https://docs.example.com/api',
+      content:         'Linked fact',
+      tags:            %w[linked],
+      source_uri:      'https://docs.example.com/api',
       relevance_score: 0.8
     )
     links = Legion::Apollo::Local.source_links_for(entry_id: result[:id])
@@ -70,8 +71,8 @@ RSpec.describe 'Apollo::Local source linkage' do
 
   it 'defaults relevance_score to 1.0 when not specified' do
     result = Legion::Apollo::Local.ingest(
-      content: 'Default score fact',
-      tags: %w[test],
+      content:    'Default score fact',
+      tags:       %w[test],
       source_uri: 'https://example.com/doc'
     )
     link = db[:local_source_links].where(entry_id: result[:id]).first

@@ -9,23 +9,9 @@ RSpec.describe Legion::Apollo::Local, '.seed_self_knowledge' do
   before do
     described_class.reset!
 
-    local_db.create_table(:local_knowledge) do
-      primary_key :id
-      String :content
-      String :content_hash
-      String :tags
-      String :embedding
-      String :embedded_at
-      String :source_channel
-      String :source_agent
-      String :submitted_by
-      Float :confidence
-      String :expires_at
-      String :created_at
-      String :updated_at
-    end
-
-    local_db.run('CREATE VIRTUAL TABLE IF NOT EXISTS local_knowledge_fts USING fts5(content, tags)')
+    require 'sequel/extensions/migration'
+    migration_path = File.expand_path('../../../../lib/legion/apollo/local/migrations', __dir__)
+    Sequel::Migrator.run(local_db, migration_path, table: :schema_migrations_apollo_local)
 
     db_ref = local_db
     stub_const('Legion::Data::Local', Module.new do

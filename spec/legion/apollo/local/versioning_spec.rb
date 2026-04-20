@@ -16,6 +16,7 @@ RSpec.describe 'Apollo::Local versioning' do
 
     stub_const('Legion::Data::Local', Module.new do
       extend self
+
       define_method(:connected?) { true }
       define_method(:connection) { local_db }
       define_method(:register_migrations) { |**_| nil }
@@ -31,10 +32,10 @@ RSpec.describe 'Apollo::Local versioning' do
     parent_id = result1[:id]
 
     result2 = Legion::Apollo::Local.ingest(
-      content: 'Updated policy v2',
-      tags: %w[policy],
+      content:             'Updated policy v2',
+      tags:                %w[policy],
       parent_knowledge_id: parent_id,
-      supersession_type: 'updates'
+      supersession_type:   'updates'
     )
 
     parent = db[:local_knowledge].where(id: parent_id).first
@@ -49,10 +50,10 @@ RSpec.describe 'Apollo::Local versioning' do
   it 'default query only returns is_latest entries' do
     result1 = Legion::Apollo::Local.ingest(content: 'Deploy policy v1', tags: %w[deploy])
     Legion::Apollo::Local.ingest(
-      content: 'Deploy policy v2',
-      tags: %w[deploy],
+      content:             'Deploy policy v2',
+      tags:                %w[deploy],
       parent_knowledge_id: result1[:id],
-      supersession_type: 'updates'
+      supersession_type:   'updates'
     )
 
     results = Legion::Apollo::Local.query(text: 'Deploy policy', tags: %w[deploy])
@@ -64,10 +65,10 @@ RSpec.describe 'Apollo::Local versioning' do
   it 'query with include_history returns all versions' do
     result1 = Legion::Apollo::Local.ingest(content: 'Auth policy v1', tags: %w[auth])
     Legion::Apollo::Local.ingest(
-      content: 'Auth policy v2',
-      tags: %w[auth],
+      content:             'Auth policy v2',
+      tags:                %w[auth],
       parent_knowledge_id: result1[:id],
-      supersession_type: 'updates'
+      supersession_type:   'updates'
     )
 
     results = Legion::Apollo::Local.query(text: 'Auth policy', tags: %w[auth], include_history: true)
