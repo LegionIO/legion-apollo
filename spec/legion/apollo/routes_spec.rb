@@ -136,4 +136,72 @@ RSpec.describe Legion::Apollo::Routes do
       expect(result[:body]).to eq({ success: false, error: :no_path_available })
     end
   end
+
+  describe 'apollo_status_code mapping' do
+    before { described_class.registered(ApolloRoutesSpecSupport::FakeApp) }
+
+    let(:context) do
+      ApolloRoutesSpecSupport::FakeContext.new(
+        app_class: ApolloRoutesSpecSupport::FakeApp
+      )
+    end
+
+    it 'returns 503 for :no_path_available' do
+      result = { success: false, error: :no_path_available }
+      expect(context.send(:apollo_status_code, result)).to eq(503)
+    end
+
+    it 'returns 503 for :not_started' do
+      result = { success: false, error: :not_started }
+      expect(context.send(:apollo_status_code, result)).to eq(503)
+    end
+
+    it 'returns 503 for :local_not_started' do
+      result = { success: false, error: :local_not_started }
+      expect(context.send(:apollo_status_code, result)).to eq(503)
+    end
+
+    it 'returns 503 for :upstream_query_failed' do
+      result = { success: false, error: :upstream_query_failed }
+      expect(context.send(:apollo_status_code, result)).to eq(503)
+    end
+
+    it 'returns 503 for :backend_query_failed' do
+      result = { success: false, error: :backend_query_failed, detail: 'pgvector syntax error' }
+      expect(context.send(:apollo_status_code, result)).to eq(503)
+    end
+
+    it 'returns 500 for string error messages (unexpected server failures)' do
+      result = { success: false, error: 'unexpected runtime error' }
+      expect(context.send(:apollo_status_code, result)).to eq(500)
+    end
+
+    it 'returns 200 for success' do
+      result = { success: true, entries: [] }
+      expect(context.send(:apollo_status_code, result)).to eq(200)
+    end
+
+    it 'returns 202 for async mode' do
+      result = { success: true, mode: :async }
+      expect(context.send(:apollo_status_code, result)).to eq(202)
+    end
+
+    it 'returns custom success_status' do
+      result = { success: true }
+      expect(context.send(:apollo_status_code, result, success_status: 201)).to eq(201)
+    end
+  end
+
+  describe 'POST /api/apollo/query with backend failure' do
+    it 'returns 503 when backend query fails on non-Postgres' do
+      allow(Legion::Apollo).to receive(:query).and_return(
+        { success: false, error: :backend_query_failed, detail: 'pgvector SQL not supported on SQLite' }
+      )
+
+      result = call_route(:post, '/api/apollo/query', body: { query: 'test', scope: 'global' })
+
+      expect(result[:status]).to eq(503)
+      expect(result[:body][:error]).to eq(:backend_query_failed)
+    end
+  end
 end
