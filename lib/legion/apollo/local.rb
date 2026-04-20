@@ -115,8 +115,11 @@ module Legion
           candidates = cosine_rerank(text, candidates) if can_rerank?
           results = candidates.first(limit)
 
+          tier = opts[:tier]
+          results = results.map { |r| project_tier(r, tier) } if tier
+
           log.info { "Apollo::Local query completed count=#{results.size}" }
-          { success: true, results: results, count: results.size, mode: :local }
+          { success: true, results: results, count: results.size, mode: :local, tier: tier }
         rescue StandardError => e
           handle_exception(
             e,
@@ -717,6 +720,21 @@ module Legion
           db.run("DELETE FROM local_knowledge_fts WHERE rowid = #{id}")
           sync_fts!(id, content, tags_json)
           log.debug { "Apollo::Local FTS rebuilt id=#{id}" }
+        end
+
+        def project_tier(entry, tier)
+          case tier
+          when :l0
+            entry.slice(:id, :content_hash, :confidence, :tags, :source_channel, :is_inference, :is_latest).merge(
+              summary: entry[:summary_l0] || entry[:content]&.slice(0, 200)
+            )
+          when :l1
+            entry.slice(:id, :content_hash, :confidence, :tags, :source_channel, :is_inference, :is_latest).merge(
+              summary: entry[:summary_l1] || entry[:content]&.slice(0, 1000)
+            )
+          else
+            entry
+          end
         end
 
         def not_started_error
