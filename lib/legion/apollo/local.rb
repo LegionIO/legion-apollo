@@ -257,6 +257,16 @@ module Legion
           { success: false, error: e.message }
         end
 
+        def source_links_for(entry_id:)
+          return not_started_error unless started?
+
+          links = db[:local_source_links].where(entry_id: entry_id).all
+          { success: true, links: links, count: links.size }
+        rescue StandardError => e
+          handle_exception(e, level: :error, operation: 'apollo.local.source_links_for', entry_id: entry_id)
+          { success: false, error: e.message }
+        end
+
         private
 
         def self_knowledge_files
@@ -409,7 +419,7 @@ module Legion
           log.debug { "Apollo::Local ingest hash=#{hash} tags=#{Array(tags).size} source_channel=#{opts[:source_channel]}" }
 
           row = build_ingest_row(content: content, hash: hash, tags: tags, **opts)
-          id = persist_ingest_row(row)
+          id = persist_ingest_row(row, opts)
           mark_parent_superseded(opts[:parent_knowledge_id]) if opts[:parent_knowledge_id]
 
           log.info { "Apollo::Local ingest stored id=#{id} hash=#{hash}" }
@@ -438,12 +448,26 @@ module Legion
           }.merge(embedding_columns(content, opts)).merge(timestamp_columns)
         end
 
-        def persist_ingest_row(row)
+        def persist_ingest_row(row, opts = {})
           db.transaction do
             id = db[:local_knowledge].insert(row)
             sync_fts!(id, row[:content], row[:tags])
+            create_source_link(id, opts) if opts[:source_uri]
             id
           end
+        end
+
+        def create_source_link(entry_id, opts)
+          db[:local_source_links].insert(
+            entry_id:          entry_id,
+            source_uri:        opts[:source_uri],
+            source_hash:       opts[:source_hash],
+            relevance_score:   opts[:relevance_score] || 1.0,
+            extraction_method: opts[:extraction_method],
+            created_at:        Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+          )
+        rescue StandardError => e
+          handle_exception(e, level: :warn, operation: 'apollo.local.create_source_link', entry_id: entry_id)
         end
 
         def deduplicated_ingest(hash)
