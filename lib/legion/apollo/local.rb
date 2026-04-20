@@ -476,9 +476,7 @@ module Legion
           end
 
           tokens = text.to_s.scan(/[\p{L}\p{N}_]+/)
-          if tokens.empty?
-            return ilike_search(text, now: now, limit: limit)
-          end
+          return ilike_search(text, now: now, limit: limit) if tokens.empty?
 
           escaped = tokens.map { |t| %("#{t}") }.join(' ')
           db.fetch(
