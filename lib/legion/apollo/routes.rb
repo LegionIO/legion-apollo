@@ -197,13 +197,16 @@ module Legion
           :global
         end
 
-        def apollo_status_code(result, success_status: 200)
+        def apollo_status_code(result, success_status: 200) # rubocop:disable Metrics/MethodLength
           return 202 if result[:success] && result[:mode] == :async
           return success_status if result[:success]
 
           case result[:error]
-          when :no_path_available, :not_started then 503
-          else 500
+          when :no_path_available, :not_started, :local_not_started,
+               :upstream_query_failed, :backend_query_failed
+            503
+          else
+            500
           end
         rescue StandardError => e
           handle_exception(e, level: :debug, operation: :apollo_status_code)
