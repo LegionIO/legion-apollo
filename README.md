@@ -1,10 +1,10 @@
 # legion-apollo
 
-Apollo client library for the LegionIO framework.
+Apollo is the LegionIO knowledge client. It gives extensions one API for writing, retrieving, and merging knowledge across the global Apollo service and the node-local SQLite store.
 
-**Version**: 0.3.2
+**Version**: 0.5.2
 
-Provides `query`, `ingest`, and `retrieve` with smart routing: co-located lex-apollo service, RabbitMQ transport, or graceful failure. Supports a node-local SQLite knowledge store (`Apollo::Local`) that mirrors the same API without requiring any remote infrastructure.
+`legion-apollo` provides `query`, `ingest`, and `retrieve` with smart routing: co-located `lex-apollo`, RabbitMQ transport, node-local SQLite, or graceful failure. `Apollo::Local` mirrors the same public API for offline and low-latency retrieval without requiring remote infrastructure.
 
 ## Usage
 
@@ -21,6 +21,24 @@ results = Legion::Apollo.query(text: 'local note', scope: :local)
 
 # Query both and merge (deduped by content hash, ranked by confidence)
 results = Legion::Apollo.query(text: 'ruby', scope: :all)
+
+# Preserve verbatim source text separately from indexed retrieval content
+Legion::Apollo.ingest(
+  content: 'Summarized policy note for search',
+  raw_content: 'Exact source text from the original record',
+  tags: %w[policy source],
+  scope: :local
+)
+
+# Query the local store as it was valid at a point in time
+Legion::Apollo.ingest(
+  content: 'Policy version active in Q2',
+  tags: %w[policy],
+  valid_from: '2026-04-01T00:00:00.000Z',
+  valid_to: '2026-06-30T23:59:59.999Z',
+  scope: :local
+)
+results = Legion::Apollo.query(text: 'policy', scope: :local, as_of: '2026-05-01T00:00:00.000Z')
 ```
 
 ## Scopes
@@ -37,9 +55,12 @@ results = Legion::Apollo.query(text: 'ruby', scope: :all)
 
 Features:
 - Content-hash dedup (MD5 of normalized content)
+- `raw_content` preservation for verbatim source text
+- `valid_from` / `valid_to` temporal windows with `as_of:` query filtering
 - Optional LLM embeddings (1024-dim) with cosine rerank when `Legion::LLM.can_embed?`
 - TTL expiry (default 5-year retention)
 - FTS5 full-text search with `ILIKE` fallback
+- Null-byte removal and invalid UTF-8 scrubbing before persistence or backend routing
 
 ## Configuration
 

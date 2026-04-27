@@ -132,6 +132,14 @@ RSpec.describe Legion::Apollo do
           )
         )
       end
+
+      it 'strips null bytes before querying' do
+        described_class.query(text: "hello\u0000world")
+
+        expect(knowledge_runner).to have_received(:handle_query).with(
+          hash_including(text: 'helloworld', query: 'helloworld')
+        )
+      end
     end
   end
 
@@ -149,6 +157,32 @@ RSpec.describe Legion::Apollo do
       it 'returns no_path_available' do
         result = described_class.ingest(content: 'test')
         expect(result).to eq({ success: false, error: :no_path_available })
+      end
+    end
+
+    context 'when started and a co-located writer is available' do
+      let(:knowledge_runner) do
+        Module.new do
+          def self.handle_ingest(**); end
+        end
+      end
+
+      before do
+        described_class.start
+        allow(described_class).to receive(:co_located_writer?).and_return(true)
+        stub_const('Legion::Extensions', Module.new)
+        stub_const('Legion::Extensions::Apollo', Module.new)
+        stub_const('Legion::Extensions::Apollo::Runners', Module.new)
+        stub_const('Legion::Extensions::Apollo::Runners::Knowledge', knowledge_runner)
+        allow(knowledge_runner).to receive(:handle_ingest).and_return({ success: true })
+      end
+
+      it 'strips null bytes from indexed and raw content before routing' do
+        described_class.ingest(content: "indexed\u0000text", raw_content: "raw\u0000text")
+
+        expect(knowledge_runner).to have_received(:handle_ingest).with(
+          hash_including(content: 'indexedtext', raw_content: 'rawtext')
+        )
       end
     end
   end

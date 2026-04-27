@@ -2,6 +2,6 @@
 
 module Legion
   module Apollo
-    VERSION = '0.5.0'
+    VERSION = '0.5.2'
   end
 end

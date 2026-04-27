@@ -68,6 +68,7 @@ module Legion
             agent_id:           body[:agent_id] || 'api',
             scope:              normalize_scope(body[:scope]),
             tier:               body[:tier]&.to_sym,
+            as_of:              body[:as_of],
             include_inferences: body.fetch(:include_inferences, true),
             include_history:    body.fetch(:include_history, false)
           )
@@ -88,6 +89,7 @@ module Legion
           tags = Legion::Apollo::Helpers::TagNormalizer.normalize(Array(body[:tags])).first(effective_max_tags)
           result = Legion::Apollo.ingest(
             content:             body[:content],
+            raw_content:         body[:raw_content],
             content_type:        body[:content_type] || :observation,
             tags:                tags,
             source_agent:        body[:source_agent] || 'api',
@@ -99,6 +101,8 @@ module Legion
             is_inference:        body[:is_inference] == true,
             forget_reason:       body[:forget_reason],
             expires_at:          body[:expires_at],
+            valid_from:          body[:valid_from],
+            valid_to:            body[:valid_to],
             parent_knowledge_id: body[:parent_knowledge_id],
             supersession_type:   body[:supersession_type],
             source_uri:          body[:source_uri],

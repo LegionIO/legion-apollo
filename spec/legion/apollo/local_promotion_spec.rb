@@ -82,6 +82,93 @@ RSpec.describe Legion::Apollo::Local do
         parsed_tags = Legion::JSON.parse(result[:results].first[:tags])
         expect(parsed_tags).to include('bond', 'calibration')
       end
+
+      it 'falls back to Ruby filtering for SQL compatibility errors while the DB is usable' do
+        allow(db).to receive(:[]).and_raise(Sequel::DatabaseError, 'json_each unavailable')
+        allow(described_class).to receive(:query_by_tags_via_ruby).and_return([{ content: 'fallback row' }])
+
+        result = described_class.query_by_tags(tags: %w[bond calibration])
+
+        expect(result[:success]).to be true
+        expect(result[:results]).to eq([{ content: 'fallback row' }])
+        expect(described_class).to have_received(:query_by_tags_via_ruby).with(
+          db,
+          tags:  %w[bond calibration],
+          limit: 50
+        )
+      end
+    end
+
+    context 'when the local DB is unavailable' do
+      before do
+        stub_const('Legion::Data::Local', Module.new do
+          extend self
+
+          define_method(:connected?) { true }
+          define_method(:connection) { nil }
+        end)
+        allow(described_class).to receive(:started?).and_return(true)
+      end
+
+      it 'returns not_started without querying SQL or Ruby fallback' do
+        expect(described_class).not_to receive(:query_by_tags_via_sql)
+        expect(described_class).not_to receive(:query_by_tags_via_ruby)
+
+        result = described_class.query_by_tags(tags: %w[bond calibration])
+
+        expect(result[:success]).to be false
+        expect(result[:error]).to eq(:not_started)
+      end
+    end
+
+    context 'when started changes before the query uses the DB' do
+      let(:db) { Sequel.sqlite }
+
+      before do
+        local_db = db
+        stub_const('Legion::Data::Local', Module.new do
+          extend self
+
+          define_method(:connected?) { true }
+          define_method(:connection) { local_db }
+        end)
+        allow(described_class).to receive(:started?).and_return(true, false)
+      end
+
+      it 'returns not_started before SQL or Ruby fallback reads local_knowledge' do
+        expect(described_class).not_to receive(:query_by_tags_via_sql)
+        expect(described_class).not_to receive(:query_by_tags_via_ruby)
+
+        result = described_class.query_by_tags(tags: %w[bond calibration])
+
+        expect(result[:success]).to be false
+        expect(result[:error]).to eq(:not_started)
+      end
+    end
+
+    context 'when the DB becomes unavailable after SQL raises' do
+      let(:db) { Sequel.sqlite }
+
+      before do
+        local_db = db
+        stub_const('Legion::Data::Local', Module.new do
+          extend self
+
+          define_method(:connected?) { true }
+          define_method(:connection) { local_db }
+        end)
+        allow(described_class).to receive(:started?).and_return(true, true, false)
+        allow(db).to receive(:[]).and_raise(Sequel::DatabaseConnectionError, 'closed')
+      end
+
+      it 'does not fall back to Ruby filtering' do
+        expect(described_class).not_to receive(:query_by_tags_via_ruby)
+
+        result = described_class.query_by_tags(tags: %w[bond calibration])
+
+        expect(result[:success]).to be false
+        expect(result[:error]).to eq('closed')
+      end
     end
   end
 
@@ -99,6 +186,8 @@ RSpec.describe Legion::Apollo::Local do
     context 'when started with entries' do
       before do
         allow(described_class).to receive(:started?).and_return(true)
+        allow(described_class).to receive(:local_db_connection).and_return(double('local_db'))
+        allow(described_class).to receive(:local_db_usable?).and_return(true)
         allow(described_class).to receive(:query_by_tags).and_return({
                                                                        success: true,
                                                                        results: [
@@ -132,6 +221,21 @@ confidence: 0.3 }]
                                                           scope:          :global
                                                         ))
         described_class.promote_to_global(tags: %w[bond attachment])
+      end
+    end
+
+    context 'when query_by_tags detects shutdown during promotion' do
+      before do
+        allow(described_class).to receive(:local_db_connection).and_return(double('local_db'))
+        allow(described_class).to receive(:local_db_usable?).and_return(true)
+        allow(described_class).to receive(:query_by_tags).and_return({ success: false, error: :not_started })
+      end
+
+      it 'propagates the availability failure instead of reporting zero promoted' do
+        result = described_class.promote_to_global(tags: %w[bond])
+
+        expect(result[:success]).to be false
+        expect(result[:error]).to eq(:not_started)
       end
     end
   end

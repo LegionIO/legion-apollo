@@ -97,9 +97,11 @@ module Legion
         return not_started_error unless started?
 
         normalized_tags = normalize_tags_input(tags)
-        payload = { content: content, tags: normalized_tags, **opts }
+        normalized_content = normalize_text_input(content)
+        normalized_raw_content = normalize_text_input(opts.key?(:raw_content) ? opts[:raw_content] : content)
+        payload = { **opts, content: normalized_content, raw_content: normalized_raw_content, tags: normalized_tags }
         log.info do
-          "Apollo ingest requested scope=#{scope} content_length=#{content.to_s.length} " \
+          "Apollo ingest requested scope=#{scope} content_length=#{payload[:content].to_s.length} " \
             "tags=#{payload[:tags].size} source_channel=#{payload[:source_channel]}"
         end
         log.debug do
@@ -289,7 +291,8 @@ module Legion
             "limit=#{payload[:limit]}"
         end
         result = Legion::Apollo::Local.query(**payload.slice(:text, :limit, :min_confidence, :tags,
-                                                             :tier, :include_inferences, :include_history))
+                                                             :tier, :include_inferences, :include_history,
+                                                             :as_of))
         return result unless result[:success]
 
         entries = normalize_local_entries(Array(result[:results]))
@@ -324,7 +327,8 @@ module Legion
         if Legion::Apollo::Local.started?
           attempted = true
           local = Legion::Apollo::Local.query(**payload.slice(:text, :limit, :min_confidence, :tags,
-                                                              :tier, :include_inferences, :include_history))
+                                                              :tier, :include_inferences, :include_history,
+                                                              :as_of))
           if local[:success]
             any_success = true
             entries.concat(normalize_local_entries(Array(local[:results]))) if local[:results]
@@ -377,18 +381,29 @@ module Legion
                  else
                    Array(e[:tags])
                  end
-          { id: e[:id], content: e[:content], content_hash: hash,
-            confidence: e[:confidence] || 0.5, content_type: 'fact', tags: tags, source: :local }
+          { id: e[:id], content: e[:content], raw_content: e[:raw_content] || e[:content], content_hash: hash,
+            confidence: e[:confidence] || 0.5, content_type: 'fact', tags: tags, source: :local,
+            valid_from: e[:valid_from], valid_to: e[:valid_to] }
         end
       end
 
       def normalize_global_entries(entries)
-        entries.map do |e|
-          hash = e[:content_hash] || Digest::MD5.hexdigest(e[:content].to_s.strip.downcase.gsub(/\s+/, ' '))
-          { id: e[:id], content: e[:content], content_hash: hash,
-            confidence: e[:confidence] || 0.5, content_type: e[:content_type] || 'fact',
-            tags: Array(e[:tags]), source: :global }
-        end
+        entries.map { |entry| normalize_global_entry(entry) }
+      end
+
+      def normalize_global_entry(entry)
+        { id: entry[:id], content: entry[:content], raw_content: normalized_raw_content(entry),
+          content_hash: normalized_content_hash(entry), confidence: entry[:confidence] || 0.5,
+          content_type: entry[:content_type] || 'fact', tags: Array(entry[:tags]), source: :global,
+          valid_from: entry[:valid_from], valid_to: entry[:valid_to] }
+      end
+
+      def normalized_raw_content(entry)
+        entry[:raw_content] || entry[:content]
+      end
+
+      def normalized_content_hash(entry)
+        entry[:content_hash] || Digest::MD5.hexdigest(entry[:content].to_s.strip.downcase.gsub(/\s+/, ' '))
       end
 
       def dedup_and_rank(entries, limit:)
@@ -470,20 +485,28 @@ module Legion
       end
 
       def normalize_text_input(value) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/MethodLength
-        case value
-        when String
-          value
-        when Array
-          parts = value.filter_map { |entry| extract_text_fragment(entry) }
-          joined = parts.map(&:to_s).map(&:strip).reject(&:empty?).join("\n")
-          joined.empty? ? value.to_s : joined
-        when Hash
-          extract_text_fragment(value).to_s
-        when nil
-          ''
-        else
-          value.to_s
-        end
+        text = case value
+               when String
+                 value
+               when Array
+                 parts = value.filter_map { |entry| extract_text_fragment(entry) }
+                 joined = parts.map(&:to_s).map(&:strip).reject(&:empty?).join("\n")
+                 joined.empty? ? value.to_s : joined
+               when Hash
+                 extract_text_fragment(value).to_s
+               when nil
+                 ''
+               else
+                 value.to_s
+               end
+        sanitize_text_input(text)
+      end
+
+      def sanitize_text_input(value)
+        text = value.to_s.dup
+        text = text.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: '')
+        text = text.scrub('') unless text.valid_encoding?
+        text.delete("\u0000")
       end
 
       def normalize_tags_input(tags)

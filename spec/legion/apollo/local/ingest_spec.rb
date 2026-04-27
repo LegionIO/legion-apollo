@@ -38,7 +38,43 @@ RSpec.describe 'Apollo::Local ingest' do
     Legion::Apollo::Local.ingest(content: 'Hello world', tags: %w[greeting])
     row = db[:local_knowledge].first
     expect(row[:content]).to eq('Hello world')
+    expect(row[:raw_content]).to eq('Hello world')
     expect(row[:tags]).to eq('["greeting"]')
+  end
+
+  it 'stores verbatim raw_content separately from indexed content' do
+    Legion::Apollo::Local.ingest(
+      content:     'Searchable summary',
+      raw_content: 'Original source transcript',
+      tags:        %w[source]
+    )
+
+    row = db[:local_knowledge].first
+    expect(row[:content]).to eq('Searchable summary')
+    expect(row[:raw_content]).to eq('Original source transcript')
+  end
+
+  it 'strips null bytes before storing content and raw_content' do
+    Legion::Apollo::Local.ingest(
+      content:     "Searchable\u0000summary",
+      raw_content: "Original\u0000source",
+      tags:        %w[source]
+    )
+
+    row = db[:local_knowledge].first
+    expect(row[:content]).to eq('Searchablesummary')
+    expect(row[:raw_content]).to eq('Originalsource')
+  end
+
+  it 'scrubs invalid UTF-8 before storing content' do
+    invalid = +"Invalid \xC3 text"
+    invalid.force_encoding(Encoding::UTF_8)
+
+    result = Legion::Apollo::Local.ingest(content: invalid, tags: %w[encoding])
+
+    expect(result[:success]).to be true
+    row = db[:local_knowledge].first
+    expect(row[:content]).to eq('Invalid  text')
   end
 
   it 'normalizes tags before storing them' do
@@ -72,6 +108,19 @@ RSpec.describe 'Apollo::Local ingest' do
     expires = Time.parse(row[:expires_at])
     expected_min = Time.now.utc + (4.9 * 365.25 * 24 * 3600)
     expect(expires).to be > expected_min
+  end
+
+  it 'stores temporal validity windows' do
+    Legion::Apollo::Local.ingest(
+      content:    'Timed fact',
+      tags:       %w[time],
+      valid_from: '2026-04-01T00:00:00Z',
+      valid_to:   '2026-04-30T23:59:59Z'
+    )
+
+    row = db[:local_knowledge].first
+    expect(row[:valid_from]).to eq('2026-04-01T00:00:00.000Z')
+    expect(row[:valid_to]).to eq('2026-04-30T23:59:59.000Z')
   end
 
   it 'stores embedding as nil when LLM is unavailable' do
