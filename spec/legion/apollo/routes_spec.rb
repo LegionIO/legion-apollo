@@ -150,6 +150,14 @@ RSpec.describe Legion::Apollo::Routes do
       expect(result[:status]).to eq(503)
       expect(result[:body]).to eq({ success: false, error: :no_path_available })
     end
+
+    it 'does not pass raw_content when the request omits it' do
+      allow(Legion::Apollo).to receive(:ingest).and_return({ success: true, mode: :global })
+
+      call_route(:post, '/api/apollo/ingest', body: { content: 'hello', tags: ['tag'] })
+
+      expect(Legion::Apollo).to have_received(:ingest).with(hash_not_including(:raw_content))
+    end
   end
 
   describe 'apollo_status_code mapping' do

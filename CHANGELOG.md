@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.3] - 2026-04-27
+
+### Fixed
+- Preserve temporal validity windows when promoting local knowledge to global Apollo.
+- Treat nil or blank `raw_content` as absent so indexed content remains the raw-content fallback.
+- Ignore unparseable temporal inputs instead of storing arbitrary strings that break lexical validity comparisons.
+
 ## [0.5.2] - 2026-04-27
 
 ### Added

@@ -184,6 +184,14 @@ RSpec.describe Legion::Apollo do
           hash_including(content: 'indexedtext', raw_content: 'rawtext')
         )
       end
+
+      it 'falls back to indexed content when raw_content is nil' do
+        described_class.ingest(content: 'indexed text', raw_content: nil)
+
+        expect(knowledge_runner).to have_received(:handle_ingest).with(
+          hash_including(content: 'indexed text', raw_content: 'indexed text')
+        )
+      end
     end
   end
 

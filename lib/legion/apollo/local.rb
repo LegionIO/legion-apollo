@@ -205,6 +205,8 @@ module Legion
             result = Legion::Apollo.ingest(
               content:        entry[:content],
               raw_content:    entry[:raw_content] || entry[:content],
+              valid_from:     entry[:valid_from],
+              valid_to:       entry[:valid_to],
               tags:           entry_tags + ['promoted_from_local'],
               source_channel: 'local_promotion',
               submitted_by:   "node:#{hostname}",
@@ -437,7 +439,7 @@ module Legion
 
         def ingest_without_lock(content:, tags:, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           content = normalize_text_input(content)
-          raw_content = normalize_text_input(opts.key?(:raw_content) ? opts[:raw_content] : content)
+          raw_content = normalize_raw_content_input(opts[:raw_content], fallback: content)
           hash = content_hash(content)
           return deduplicated_ingest(hash) if duplicate?(hash)
 
@@ -760,7 +762,16 @@ module Legion
 
           Time.parse(text).utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
         rescue StandardError
-          text
+          nil
+        end
+
+        def normalize_raw_content_input(value, fallback:)
+          if defined?(Legion::Apollo) && Legion::Apollo.respond_to?(:normalize_raw_content_input, true)
+            return Legion::Apollo.send(:normalize_raw_content_input, value, fallback: fallback)
+          end
+
+          normalized = normalize_text_input(value)
+          normalized.strip.empty? ? fallback : normalized
         end
 
         def normalize_tags_input(tags)

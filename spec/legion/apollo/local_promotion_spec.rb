@@ -191,8 +191,14 @@ RSpec.describe Legion::Apollo::Local do
         allow(described_class).to receive(:query_by_tags).and_return({
                                                                        success: true,
                                                                        results: [
-                                                                         { content: 'test data',
-tags: '["bond","attachment"]', confidence: 0.8 }
+                                                                         {
+                                                                           content:     'test data',
+                                                                           tags:        '["bond","attachment"]',
+                                                                           confidence:  0.8,
+                                                                           raw_content: 'raw test data',
+                                                                           valid_from:  '2026-04-01T00:00:00.000Z',
+                                                                           valid_to:    '2026-04-30T23:59:59.000Z'
+                                                                         }
                                                                        ]
                                                                      })
         allow(Legion::Apollo).to receive(:ingest).and_return({ success: true })
@@ -220,6 +226,16 @@ confidence: 0.3 }]
                                                           source_channel: 'local_promotion',
                                                           scope:          :global
                                                         ))
+        described_class.promote_to_global(tags: %w[bond attachment])
+      end
+
+      it 'preserves raw content and temporal windows when promoting' do
+        expect(Legion::Apollo).to receive(:ingest).with(hash_including(
+                                                          raw_content: 'raw test data',
+                                                          valid_from:  '2026-04-01T00:00:00.000Z',
+                                                          valid_to:    '2026-04-30T23:59:59.000Z'
+                                                        ))
+
         described_class.promote_to_global(tags: %w[bond attachment])
       end
     end
