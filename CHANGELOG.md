@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.2] - 2026-04-27
+
+### Added
+- Store `raw_content` alongside indexed `content` in Apollo Local so callers can preserve verbatim source text separately from retrieval text (#25, #26)
+- Add `valid_from`/`valid_to` temporal windows and `as_of:` query filtering for local knowledge entries (#27)
+
+### Fixed
+- Sanitize Apollo ingest and query text by scrubbing invalid UTF-8 and removing null bytes before routing to local or global backends (#29)
+
 ## [0.5.1] - 2026-04-27
 
 ### Fixed

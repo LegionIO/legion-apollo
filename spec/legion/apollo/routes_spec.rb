@@ -91,12 +91,12 @@ RSpec.describe Legion::Apollo::Routes do
     it 'delegates to Legion::Apollo.query and returns 200 on success' do
       allow(Legion::Apollo).to receive(:query).and_return({ success: true, entries: [], count: 0 })
 
-      result = call_route(:post, '/api/apollo/query', body: { query: 'hello', scope: 'all' })
+      result = call_route(:post, '/api/apollo/query', body: { query: 'hello', scope: 'all', as_of: '2026-05-01' })
 
       expect(result[:status]).to eq(200)
       expect(result[:body][:success]).to be true
       expect(Legion::Apollo).to have_received(:query).with(
-        hash_including(text: 'hello', scope: :all, limit: 5, min_confidence: nil)
+        hash_including(text: 'hello', scope: :all, limit: 5, min_confidence: nil, as_of: '2026-05-01')
       )
     end
 
@@ -117,13 +117,28 @@ RSpec.describe Legion::Apollo::Routes do
       result = call_route(
         :post,
         '/api/apollo/ingest',
-        body: { content: 'hello', tags: ['Team Bond', 'team bond'], scope: 'local' }
+        body: {
+          content:     'hello',
+          raw_content: 'raw hello',
+          tags:        ['Team Bond', 'team bond'],
+          scope:       'local',
+          valid_from:  '2026-04-01',
+          valid_to:    '2026-04-30'
+        }
       )
 
       expect(result[:status]).to eq(201)
       expect(result[:body][:success]).to be true
       expect(Legion::Apollo).to have_received(:ingest).with(
-        hash_including(content: 'hello', tags: ['team_bond'], scope: :local, source_channel: 'rest_api')
+        hash_including(
+          content:        'hello',
+          raw_content:    'raw hello',
+          tags:           ['team_bond'],
+          scope:          :local,
+          source_channel: 'rest_api',
+          valid_from:     '2026-04-01',
+          valid_to:       '2026-04-30'
+        )
       )
     end
 

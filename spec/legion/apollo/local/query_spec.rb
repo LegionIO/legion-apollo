@@ -95,6 +95,51 @@ RSpec.describe 'Apollo::Local query' do
     expect(expired_results).to be_empty
   end
 
+  it 'filters local query results by temporal validity windows' do
+    Legion::Apollo::Local.ingest(
+      content:    'Q2 policy is active',
+      tags:       %w[policy],
+      valid_from: '2026-04-01T00:00:00Z',
+      valid_to:   '2026-06-30T23:59:59Z'
+    )
+    Legion::Apollo::Local.ingest(
+      content:    'Q3 policy is active',
+      tags:       %w[policy],
+      valid_from: '2026-07-01T00:00:00Z',
+      valid_to:   '2026-09-30T23:59:59Z'
+    )
+
+    result = Legion::Apollo::Local.query(
+      text:  'policy active',
+      tags:  %w[policy],
+      as_of: '2026-05-01T00:00:00Z'
+    )
+
+    expect(result[:success]).to be true
+    expect(result[:results].map { |entry| entry[:content] }).to include('Q2 policy is active')
+    expect(result[:results].map { |entry| entry[:content] }).not_to include('Q3 policy is active')
+  end
+
+  it 'applies temporal validity windows to blank local queries' do
+    Legion::Apollo::Local.ingest(
+      content:    'Current temporal fact',
+      tags:       %w[temporal],
+      valid_from: '2026-01-01T00:00:00Z',
+      valid_to:   '2026-12-31T23:59:59Z'
+    )
+    Legion::Apollo::Local.ingest(
+      content:    'Future temporal fact',
+      tags:       %w[temporal],
+      valid_from: '2027-01-01T00:00:00Z'
+    )
+
+    result = Legion::Apollo::Local.query(text: '', tags: %w[temporal], as_of: '2026-05-01T00:00:00Z')
+
+    expect(result[:success]).to be true
+    expect(result[:results].map { |entry| entry[:content] }).to include('Current temporal fact')
+    expect(result[:results].map { |entry| entry[:content] }).not_to include('Future temporal fact')
+  end
+
   it 'returns not_started when not started' do
     Legion::Apollo::Local.shutdown
     result = Legion::Apollo::Local.query(text: 'test')
