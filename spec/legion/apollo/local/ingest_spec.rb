@@ -54,6 +54,14 @@ RSpec.describe 'Apollo::Local ingest' do
     expect(row[:raw_content]).to eq('Original source transcript')
   end
 
+  it 'falls back to indexed content when raw_content is nil or blank' do
+    Legion::Apollo::Local.ingest(content: 'Nil raw fallback', raw_content: nil, tags: %w[source])
+    Legion::Apollo::Local.ingest(content: 'Blank raw fallback', raw_content: '   ', tags: %w[source])
+
+    rows = db[:local_knowledge].order(:id).all
+    expect(rows.map { |row| row[:raw_content] }).to eq(['Nil raw fallback', 'Blank raw fallback'])
+  end
+
   it 'strips null bytes before storing content and raw_content' do
     Legion::Apollo::Local.ingest(
       content:     "Searchable\u0000summary",
@@ -121,6 +129,19 @@ RSpec.describe 'Apollo::Local ingest' do
     row = db[:local_knowledge].first
     expect(row[:valid_from]).to eq('2026-04-01T00:00:00.000Z')
     expect(row[:valid_to]).to eq('2026-04-30T23:59:59.000Z')
+  end
+
+  it 'ignores unparseable temporal validity windows' do
+    Legion::Apollo::Local.ingest(
+      content:    'Bad temporal fact',
+      tags:       %w[time],
+      valid_from: 'not a date',
+      valid_to:   'also not a date'
+    )
+
+    row = db[:local_knowledge].first
+    expect(row[:valid_from]).to be_nil
+    expect(row[:valid_to]).to be_nil
   end
 
   it 'stores embedding as nil when LLM is unavailable' do

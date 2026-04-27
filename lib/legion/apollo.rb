@@ -98,7 +98,7 @@ module Legion
 
         normalized_tags = normalize_tags_input(tags)
         normalized_content = normalize_text_input(content)
-        normalized_raw_content = normalize_text_input(opts.key?(:raw_content) ? opts[:raw_content] : content)
+        normalized_raw_content = normalize_raw_content_input(opts[:raw_content], fallback: normalized_content)
         payload = { **opts, content: normalized_content, raw_content: normalized_raw_content, tags: normalized_tags }
         log.info do
           "Apollo ingest requested scope=#{scope} content_length=#{payload[:content].to_s.length} " \
@@ -507,6 +507,11 @@ module Legion
         text = text.encode(Encoding::UTF_8, invalid: :replace, undef: :replace, replace: '')
         text = text.scrub('') unless text.valid_encoding?
         text.delete("\u0000")
+      end
+
+      def normalize_raw_content_input(value, fallback:)
+        normalized = normalize_text_input(value)
+        normalized.strip.empty? ? fallback : normalized
       end
 
       def normalize_tags_input(tags)

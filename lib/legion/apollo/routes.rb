@@ -87,9 +87,8 @@ module Legion
           # TagNormalizer hard-caps to MAX_TAGS=20 internally; clamp here to make that limit explicit.
           effective_max_tags = [max_tags, Legion::Apollo::Helpers::TagNormalizer::MAX_TAGS].min
           tags = Legion::Apollo::Helpers::TagNormalizer.normalize(Array(body[:tags])).first(effective_max_tags)
-          result = Legion::Apollo.ingest(
+          ingest_payload = {
             content:             body[:content],
-            raw_content:         body[:raw_content],
             content_type:        body[:content_type] || :observation,
             tags:                tags,
             source_agent:        body[:source_agent] || 'api',
@@ -109,7 +108,10 @@ module Legion
             source_hash:         body[:source_hash],
             relevance_score:     body[:relevance_score],
             extraction_method:   body[:extraction_method]
-          )
+          }
+          raw_content = body[:raw_content].to_s
+          ingest_payload[:raw_content] = body[:raw_content] unless raw_content.strip.empty?
+          result = Legion::Apollo.ingest(**ingest_payload)
           json_response(result, status_code: apollo_status_code(result, success_status: 201))
         end
       end
