@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.1] - 2026-04-27
+
+### Fixed
+- Guard Apollo Local tag queries and promotion against nil, shutdown, or unavailable local DB connections before SQL and Ruby fallback paths (#30)
+
 ## [0.5.0] - 2026-04-18
 
 ### Added

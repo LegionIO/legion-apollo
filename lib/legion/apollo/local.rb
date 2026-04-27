@@ -159,10 +159,11 @@ module Legion
         end
 
         def query_by_tags(tags:, limit: 50) # rubocop:disable Metrics/MethodLength
-          return { success: false, error: :not_started } unless started?
-
+          connection = local_db_connection
           tags = normalize_tags_input(tags)
-          results = query_by_tags_via_sql(tags: tags, limit: limit)
+          return { success: false, error: :not_started } unless local_db_usable?(connection)
+
+          results = query_by_tags_via_sql(connection, tags: tags, limit: limit)
 
           log.info { "Apollo::Local query_by_tags completed tag_count=#{tags.size} count=#{results.size}" }
           { success: true, results: results, count: results.size }
@@ -178,11 +179,13 @@ module Legion
         end
 
         def promote_to_global(tags:, min_confidence: 0.6) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
-          return { success: false, error: :not_started } unless started?
+          return { success: false, error: :not_started } unless local_db_usable?(local_db_connection)
 
           tags = normalize_tags_input(tags)
           entries = query_by_tags(tags: tags)
-          unless entries[:success] && entries[:results]&.any?
+          return entries unless entries[:success]
+
+          unless entries[:results]&.any?
             log.info { "Apollo::Local promote_to_global skipped tag_count=#{tags.size} reason=no_entries" }
             return { success: true, promoted: 0 }
           end
@@ -335,6 +338,26 @@ module Legion
 
         def db
           Legion::Data::Local.connection
+        end
+
+        def local_db_connection
+          return nil unless started? && data_local_available?
+
+          db
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'apollo.local.local_db_connection')
+          nil
+        end
+
+        def local_db_usable?(connection)
+          return false unless started? && connection
+          return false if connection.respond_to?(:closed?) && connection.closed?
+
+          connection.test_connection if connection.respond_to?(:test_connection)
+          true
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'apollo.local.local_db_usable')
+          false
         end
 
         def content_hash(content)
@@ -674,9 +697,9 @@ module Legion
           Legion::Apollo::Helpers::TagNormalizer::MAX_TAGS
         end
 
-        def query_by_tags_via_sql(tags:, limit:) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
+        def query_by_tags_via_sql(connection, tags:, limit:) # rubocop:disable Metrics/AbcSize,Metrics/MethodLength
           now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
-          dataset = db[:local_knowledge].where(Sequel.lit('expires_at > ?', now))
+          dataset = connection[:local_knowledge].where(Sequel.lit('expires_at > ?', now))
 
           Array(tags).map(&:to_s).each do |tag|
             dataset = dataset.where(
@@ -696,11 +719,15 @@ module Legion
             tag_count: Array(tags).size,
             limit:     limit
           )
-          query_by_tags_via_ruby(tags: tags, limit: limit)
+          raise unless local_db_usable?(connection)
+
+          query_by_tags_via_ruby(connection, tags: tags, limit: limit)
         end
 
-        def query_by_tags_via_ruby(tags:, limit:)
-          candidates = db[:local_knowledge]
+        def query_by_tags_via_ruby(connection, tags:, limit:)
+          raise Sequel::DatabaseConnectionError, 'local database unavailable' unless local_db_usable?(connection)
+
+          candidates = connection[:local_knowledge]
                        .where(Sequel.lit('expires_at > ?', Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')))
                        .all
 
