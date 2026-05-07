@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.4] - 2026-05-07
+
+### Fixed
+- Preserve distinct merged query results when local or global Apollo entries arrive without a `content_hash`.
+- Detect co-located Apollo reader and writer runners by module presence so in-process routing is not skipped.
+
 ## [0.5.3] - 2026-04-27
 
 ### Fixed
