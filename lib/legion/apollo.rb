@@ -224,8 +224,7 @@ module Legion
       def co_located_reader?
         return false unless data_available?
 
-        defined?(Legion::Extensions::Apollo::Runners::Knowledge) &&
-          Legion::Extensions::Apollo::Runners::Knowledge.respond_to?(:handle_query)
+        defined?(Legion::Extensions::Apollo::Runners::Knowledge) ? true : false
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'apollo.co_located_reader')
         false
@@ -234,8 +233,7 @@ module Legion
       def co_located_writer?
         return false unless data_available?
 
-        defined?(Legion::Extensions::Apollo::Runners::Knowledge) &&
-          Legion::Extensions::Apollo::Runners::Knowledge.respond_to?(:handle_ingest)
+        defined?(Legion::Extensions::Apollo::Runners::Knowledge) ? true : false
       rescue StandardError => e
         handle_exception(e, level: :debug, operation: 'apollo.co_located_writer')
         false
@@ -407,7 +405,13 @@ module Legion
       end
 
       def dedup_and_rank(entries, limit:)
-        sorted = entries
+        entries_with_hashes = entries.map do |e|
+          next e if e[:content_hash]
+
+          e.merge(content_hash: Digest::MD5.hexdigest(e[:content].to_s.strip.downcase.gsub(/\s+/, ' ')))
+        end
+
+        sorted = entries_with_hashes
                  .sort_by { |e| -(e[:confidence] || 0) }
                  .uniq { |e| e[:content_hash] }
 
