@@ -69,15 +69,13 @@ module Legion
 
           sorted_tags = normalize_tags_input(tags).sort
           tag_json = Legion::JSON.dump(sorted_tags)
-          normalized_content = normalize_text_input(content)
-          hash = content_hash(normalized_content)
           WRITE_MUTEX.synchronize do
-            existing = db[:local_knowledge].where(content_hash: hash).first
+            existing = db[:local_knowledge].where(tags: tag_json).first
 
             if existing
-              update_upsert_entry(existing, normalized_content, tag_json, opts)
+              update_upsert_entry(existing, content, tag_json, opts)
             else
-              result = ingest_without_lock(content: normalized_content, tags: sorted_tags, **opts)
+              result = ingest_without_lock(content: content, tags: sorted_tags, **opts)
               result[:mode] = :inserted if result[:success] && result[:mode] != :deduplicated
               result
             end
@@ -399,9 +397,9 @@ module Legion
         end
 
         def hydrate_from_global_without_lock # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
-          local_check = db[:local_knowledge].where(source_channel: 'global_hydration').limit(1).first
-          if local_check
-            log.info 'Apollo::Local hydration skipped because global_hydration entries already exist'
+          local_check = query_by_tags(tags: ['partner'])
+          if local_check[:success] && local_check[:results]&.any?
+            log.info 'Apollo::Local hydration skipped because local partner data already exists'
             return { success: true, skipped: :local_data_exists }
           end
 
