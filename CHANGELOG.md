@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.5] - 2026-05-15
+
+### Added
+- `Legion::Apollo.ingest` and `Legion::Apollo::Local.ingest`/`upsert` now auto-inject `access_scope` (default `'global'`), `identity_canonical_name`, `identity_principal_id`, and `identity_id` from `Legion::Identity::Process` — zero call-site changes required; guarded by `defined?` so nodes without Identity loaded are unaffected
+- Migration 006 adds the four identity/scope columns to `local_knowledge` with `access_scope` defaulting to `'global'` to match the Phase 1 Postgres schema
+
+### Fixed
+- `query_merged` now forwards `requesting_principal_id` to `Apollo::Local.query` so the access-scope filter is honoured in merged results
+- `Apollo::Local.query` accepts `requesting_principal_id:` and suppresses `private` entries whose `identity_principal_id` does not match the requesting principal (`nil` principal = system/background caller, all entries visible)
+
 ## [0.5.4] - 2026-05-07
 
 ### Fixed
