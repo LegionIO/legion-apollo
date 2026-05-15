@@ -21,7 +21,8 @@ module Legion
     @store = {
       apollo:    Legion::Apollo::Settings.default,
       transport: { connected: false },
-      data:      { connected: false }
+      data:      { connected: false },
+      logging:   {}
     }
 
     def self.[](key)
