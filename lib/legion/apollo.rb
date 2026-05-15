@@ -293,7 +293,8 @@ module Legion
         end
         result = Legion::Apollo::Local.query(**payload.slice(:text, :limit, :min_confidence, :tags,
                                                              :tier, :include_inferences, :include_history,
-                                                             :as_of))
+                                                             :as_of),
+                                            requesting_principal_id: payload[:requesting_principal_id])
         return result unless result[:success]
 
         entries = normalize_local_entries(Array(result[:results]))

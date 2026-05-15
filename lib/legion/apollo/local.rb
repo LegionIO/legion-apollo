@@ -866,7 +866,7 @@ module Legion
               source_channel:          opts.fetch(:source_channel, existing[:source_channel]),
               source_agent:            opts.fetch(:source_agent, existing[:source_agent]),
               submitted_by:            opts.fetch(:submitted_by, existing[:submitted_by]),
-              access_scope:            opts.fetch(:access_scope, existing[:access_scope] || 'global'),
+              access_scope:            opts.fetch(:access_scope, existing[:access_scope]) || 'global',
               identity_canonical_name: opts.fetch(:identity_canonical_name, existing[:identity_canonical_name]),
               identity_principal_id:   opts.fetch(:identity_principal_id, existing[:identity_principal_id]),
               identity_id:             opts.fetch(:identity_id, existing[:identity_id]),
