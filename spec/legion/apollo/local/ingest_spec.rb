@@ -39,7 +39,7 @@ RSpec.describe 'Apollo::Local ingest' do
     row = db[:local_knowledge].first
     expect(row[:content]).to eq('Hello world')
     expect(row[:raw_content]).to eq('Hello world')
-    expect(row[:tags]).to eq('["greeting"]')
+    expect(Legion::JSON.parse(row[:tags])).to eq(['greeting'])
   end
 
   it 'stores verbatim raw_content separately from indexed content' do
@@ -89,7 +89,7 @@ RSpec.describe 'Apollo::Local ingest' do
     Legion::Apollo::Local.ingest(content: 'Bond note', tags: ['Team Bond', 'team bond', 'Bond!'])
 
     row = db[:local_knowledge].first
-    expect(row[:tags]).to eq('["team_bond","bond_"]')
+    expect(Legion::JSON.parse(row[:tags])).to eq(%w[team_bond bond_])
   end
 
   it 'deduplicates by content hash' do

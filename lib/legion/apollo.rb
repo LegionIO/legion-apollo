@@ -1,7 +1,9 @@
 # frozen_string_literal: true
 
 require 'digest'
+require 'legion/json'
 require 'legion/logging'
+require 'legion/settings'
 require_relative 'apollo/version'
 require_relative 'apollo/settings'
 require_relative 'apollo/helpers/tag_normalizer'
@@ -570,7 +572,7 @@ module Legion
           identity_id:             id[:db_identity_id]
         }.compact.merge(opts)
       rescue StandardError => e
-        handle_exception(e, level: :debug, operation: 'apollo.inject_identity_context')
+        handle_exception(e, level: :warn, operation: 'apollo.inject_identity_context')
         opts
       end
 

@@ -17,7 +17,7 @@ RSpec.describe Legion::Apollo do
     end
 
     it 'does not start when apollo.enabled is false' do
-      Legion::Settings[:apollo][:enabled] = false
+      Legion::Settings.loader.settings[:apollo] = { enabled: false }
 
       described_class.start
 
@@ -210,7 +210,7 @@ RSpec.describe Legion::Apollo do
     end
 
     it 'returns true when transport is connected' do
-      Legion::Settings[:transport] = { connected: true }
+      Legion::Settings.loader.settings[:transport] = { connected: true }
       stub_const('Legion::Transport', Module.new)
       described_class.start
       expect(described_class.transport_available?).to be true
@@ -224,7 +224,7 @@ RSpec.describe Legion::Apollo do
     end
 
     it 'returns true when data is connected' do
-      Legion::Settings[:data] = { connected: true }
+      Legion::Settings.loader.settings[:data] = { connected: true }
       stub_const('Legion::Data', Module.new)
       described_class.start
       expect(described_class.data_available?).to be true

@@ -909,7 +909,7 @@ module Legion
             identity_id:             id[:db_identity_id]
           }.compact.merge(opts)
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'apollo.local.inject_identity_context')
+          handle_exception(e, level: :warn, operation: 'apollo.local.inject_identity_context')
           opts
         end
 
