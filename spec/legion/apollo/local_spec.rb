@@ -52,7 +52,7 @@ RSpec.describe Legion::Apollo::Local do
 
     context 'when disabled in settings' do
       before do
-        Legion::Settings[:apollo][:local][:enabled] = false
+        Legion::Settings.loader.settings[:apollo] = Legion::Apollo::Settings.default.merge(local: { enabled: false })
       end
 
       it 'does not start' do
