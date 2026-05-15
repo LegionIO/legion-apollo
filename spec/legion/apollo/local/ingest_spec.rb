@@ -182,4 +182,66 @@ RSpec.describe 'Apollo::Local ingest' do
     result = Legion::Apollo::Local.ingest(content: 'test', tags: [])
     expect(result).to eq({ success: false, error: :not_started })
   end
+
+  it 'stores access_scope defaulting to global' do
+    Legion::Apollo::Local.ingest(content: 'default scope fact', tags: %w[test])
+    row = db[:local_knowledge].first
+    expect(row[:access_scope]).to eq('global')
+  end
+
+  it 'stores explicit access_scope when provided' do
+    Legion::Apollo::Local.ingest(content: 'private fact', tags: %w[test], access_scope: 'private')
+    row = db[:local_knowledge].first
+    expect(row[:access_scope]).to eq('private')
+  end
+
+  it 'stores identity fields when Identity::Process is resolved' do
+    stub_const('Legion::Identity::Process', Module.new do
+      extend self
+
+      define_method(:identity_hash) do
+        { canonical_name: 'alice', db_principal_id: 42, db_identity_id: 99 }
+      end
+    end)
+
+    Legion::Apollo::Local.ingest(content: 'identity fact', tags: %w[test])
+    row = db[:local_knowledge].first
+    expect(row[:identity_canonical_name]).to eq('alice')
+    expect(row[:identity_principal_id]).to eq(42)
+    expect(row[:identity_id]).to eq(99)
+  end
+
+  it 'omits nil identity fields when Identity::Process has no resolved identity' do
+    stub_const('Legion::Identity::Process', Module.new do
+      extend self
+
+      define_method(:identity_hash) do
+        { canonical_name: nil, db_principal_id: nil, db_identity_id: nil }
+      end
+    end)
+
+    Legion::Apollo::Local.ingest(content: 'anon fact', tags: %w[test])
+    row = db[:local_knowledge].first
+    expect(row[:identity_canonical_name]).to be_nil
+    expect(row[:identity_principal_id]).to be_nil
+    expect(row[:identity_id]).to be_nil
+  end
+
+  it 'allows caller to override identity fields explicitly' do
+    stub_const('Legion::Identity::Process', Module.new do
+      extend self
+
+      define_method(:identity_hash) do
+        { canonical_name: 'alice', db_principal_id: 42, db_identity_id: 99 }
+      end
+    end)
+
+    Legion::Apollo::Local.ingest(content: 'override fact', tags: %w[test],
+                                 identity_canonical_name: 'bob',
+                                 identity_principal_id: 7, identity_id: 8)
+    row = db[:local_knowledge].first
+    expect(row[:identity_canonical_name]).to eq('bob')
+    expect(row[:identity_principal_id]).to eq(7)
+    expect(row[:identity_id]).to eq(8)
+  end
 end
