@@ -46,12 +46,13 @@ module Legion
           @started == true
         end
 
-        def ingest(content:, tags: [], **opts) # rubocop:disable Metrics/MethodLength
+        def ingest(content:, tags: [], access_scope: 'global', **opts) # rubocop:disable Metrics/MethodLength
           return not_started_error unless started?
 
           tags = normalize_tags_input(tags)
           WRITE_MUTEX.synchronize do
-            ingest_without_lock(content: content, tags: tags, **opts)
+            ingest_without_lock(content: content, tags: tags,
+                                **inject_identity_context(opts).merge(access_scope: access_scope))
           end
         rescue StandardError => e
           handle_exception(
@@ -64,18 +65,19 @@ module Legion
           { success: false, error: e.message }
         end
 
-        def upsert(content:, tags: [], **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+        def upsert(content:, tags: [], access_scope: 'global', **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           return not_started_error unless started?
 
           sorted_tags = normalize_tags_input(tags).sort
           tag_json = Legion::JSON.dump(sorted_tags)
+          merged_opts = inject_identity_context(opts).merge(access_scope: access_scope)
           WRITE_MUTEX.synchronize do
             existing = db[:local_knowledge].where(tags: tag_json).first
 
             if existing
-              update_upsert_entry(existing, content, tag_json, opts)
+              update_upsert_entry(existing, content, tag_json, merged_opts)
             else
-              result = ingest_without_lock(content: content, tags: sorted_tags, **opts)
+              result = ingest_without_lock(content: content, tags: sorted_tags, **merged_opts)
               result[:mode] = :inserted if result[:success] && result[:mode] != :deduplicated
               result
             end
@@ -91,7 +93,7 @@ module Legion
           { success: false, error: e.message }
         end
 
-        def query(text:, limit: nil, min_confidence: nil, tags: nil, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity
+        def query(text:, limit: nil, min_confidence: nil, tags: nil, requesting_principal_id: nil, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/ParameterLists
           return not_started_error unless started?
 
           text = normalize_text_input(text)
@@ -111,7 +113,8 @@ module Legion
           include_history = opts.fetch(:include_history, false)
           candidates = filter_candidates(candidates, min_confidence: min_confidence, tags: tags,
                                                      options: { include_inferences: include_inferences,
-                                                                include_history: include_history, as_of: as_of })
+                                                                include_history: include_history, as_of: as_of,
+                                                                requesting_principal_id: requesting_principal_id })
           candidates = cosine_rerank(text, candidates) if can_rerank?
           results = candidates.first(limit)
 
@@ -496,8 +499,13 @@ module Legion
         end
 
         def ingest_source_columns(opts)
-          { source_channel: opts[:source_channel], source_agent: opts[:source_agent],
-            submitted_by: opts[:submitted_by] }
+          { source_channel:          opts[:source_channel],
+            source_agent:            opts[:source_agent],
+            submitted_by:            opts[:submitted_by],
+            access_scope:            opts[:access_scope] || 'global',
+            identity_canonical_name: opts[:identity_canonical_name],
+            identity_principal_id:   opts[:identity_principal_id],
+            identity_id:             opts[:identity_id] }
         end
 
         def ingest_lineage_columns(opts)
@@ -651,6 +659,13 @@ module Legion
             candidates = candidates.select do |c|
               entry_tags = parse_tags(c[:tags])
               tag_set.intersect?(entry_tags)
+            end
+          end
+          pid = options[:requesting_principal_id]
+          if pid
+            candidates = candidates.select do |c|
+              scope = c[:access_scope] || 'global'
+              scope != 'private' || c[:identity_principal_id] == pid
             end
           end
           candidates
@@ -841,17 +856,21 @@ module Legion
 
           db.transaction do
             db[:local_knowledge].where(id: existing[:id]).update(
-              content:        content,
-              content_hash:   new_hash,
-              tags:           tags_json,
-              embedding:      embedding ? Legion::JSON.dump(embedding) : nil,
-              embedded_at:    embedded_at,
-              confidence:     opts.fetch(:confidence, existing[:confidence]),
-              expires_at:     expires_at,
-              source_channel: opts.fetch(:source_channel, existing[:source_channel]),
-              source_agent:   opts.fetch(:source_agent, existing[:source_agent]),
-              submitted_by:   opts.fetch(:submitted_by, existing[:submitted_by]),
-              updated_at:     now
+              content:                 content,
+              content_hash:            new_hash,
+              tags:                    tags_json,
+              embedding:               embedding ? Legion::JSON.dump(embedding) : nil,
+              embedded_at:             embedded_at,
+              confidence:              opts.fetch(:confidence, existing[:confidence]),
+              expires_at:              expires_at,
+              source_channel:          opts.fetch(:source_channel, existing[:source_channel]),
+              source_agent:            opts.fetch(:source_agent, existing[:source_agent]),
+              submitted_by:            opts.fetch(:submitted_by, existing[:submitted_by]),
+              access_scope:            opts.fetch(:access_scope, existing[:access_scope] || 'global'),
+              identity_canonical_name: opts.fetch(:identity_canonical_name, existing[:identity_canonical_name]),
+              identity_principal_id:   opts.fetch(:identity_principal_id, existing[:identity_principal_id]),
+              identity_id:             opts.fetch(:identity_id, existing[:identity_id]),
+              updated_at:              now
             )
             rebuild_fts_entry!(existing[:id], content, tags_json)
           end
@@ -878,6 +897,20 @@ module Legion
           else
             entry
           end
+        end
+
+        def inject_identity_context(opts)
+          return opts unless defined?(Legion::Identity::Process)
+
+          id = Legion::Identity::Process.identity_hash
+          {
+            identity_canonical_name: id[:canonical_name],
+            identity_principal_id:   id[:db_principal_id],
+            identity_id:             id[:db_identity_id]
+          }.compact.merge(opts)
+        rescue StandardError => e
+          handle_exception(e, level: :debug, operation: 'apollo.local.inject_identity_context')
+          opts
         end
 
         def not_started_error
