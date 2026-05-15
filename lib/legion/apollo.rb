@@ -93,13 +93,14 @@ module Legion
         end
       end
 
-      def ingest(content:, tags: [], scope: :global, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+      def ingest(content:, tags: [], scope: :global, access_scope: 'global', **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
         return not_started_error unless started?
 
         normalized_tags = normalize_tags_input(tags)
         normalized_content = normalize_text_input(content)
         normalized_raw_content = normalize_raw_content_input(opts[:raw_content], fallback: normalized_content)
-        payload = { **opts, content: normalized_content, raw_content: normalized_raw_content, tags: normalized_tags }
+        payload = { **inject_identity_context(opts), content: normalized_content,
+                    raw_content: normalized_raw_content, tags: normalized_tags, access_scope: access_scope }
         log.info do
           "Apollo ingest requested scope=#{scope} content_length=#{payload[:content].to_s.length} " \
             "tags=#{payload[:tags].size} source_channel=#{payload[:source_channel]}"
@@ -326,7 +327,8 @@ module Legion
           attempted = true
           local = Legion::Apollo::Local.query(**payload.slice(:text, :limit, :min_confidence, :tags,
                                                               :tier, :include_inferences, :include_history,
-                                                              :as_of))
+                                                              :as_of),
+                                             requesting_principal_id: payload[:requesting_principal_id])
           if local[:success]
             any_success = true
             entries.concat(normalize_local_entries(Array(local[:results]))) if local[:results]
@@ -556,6 +558,20 @@ module Legion
         else
           value.to_s
         end
+      end
+
+      def inject_identity_context(opts)
+        return opts unless defined?(Legion::Identity::Process)
+
+        id = Legion::Identity::Process.identity_hash
+        {
+          identity_canonical_name: id[:canonical_name],
+          identity_principal_id:   id[:db_principal_id],
+          identity_id:             id[:db_identity_id]
+        }.compact.merge(opts)
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'apollo.inject_identity_context')
+        opts
       end
 
       def not_started_error
