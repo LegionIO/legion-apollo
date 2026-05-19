@@ -74,6 +74,7 @@ module Legion
         normalized_tags = normalize_tags_input(tags)
         limit          ||= apollo_setting(:default_limit, 5)
         min_confidence ||= apollo_setting(:min_confidence, 0.3)
+        opts = inject_requesting_principal_id(opts)
         log.info { "Apollo query requested scope=#{scope} text_length=#{text.to_s.length} limit=#{limit}" }
         log.debug do
           "Apollo query scope=#{scope} limit=#{limit} min_confidence=#{min_confidence} tags=#{normalized_tags.size}"
@@ -574,6 +575,19 @@ module Legion
         }.compact.merge(opts)
       rescue StandardError => e
         handle_exception(e, level: :warn, operation: 'apollo.inject_identity_context')
+        opts
+      end
+
+      def inject_requesting_principal_id(opts)
+        return opts if opts.key?(:requesting_principal_id)
+        return opts unless defined?(Legion::Identity::Process)
+
+        principal_id = Legion::Identity::Process.db_principal_id
+        return opts if principal_id.nil?
+
+        opts.merge(requesting_principal_id: principal_id)
+      rescue StandardError => e
+        handle_exception(e, level: :warn, operation: 'apollo.inject_requesting_principal_id')
         opts
       end
 
