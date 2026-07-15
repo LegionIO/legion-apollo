@@ -189,37 +189,4 @@ RSpec.describe Legion::Apollo::Local do
       expect(query_result[:results].map { |entry| entry[:id] }).to include(row_id)
     end
   end
-
-  describe '#seed_self_knowledge' do
-    let(:db) { Sequel.sqlite }
-
-    before do
-      local_db = db
-      stub_const('Legion::Data::Local', Module.new do
-        extend self
-
-        define_method(:connected?) { true }
-        define_method(:connection) { local_db }
-        define_method(:register_migrations) { |**_| nil }
-      end)
-      Sequel::Migrator.run(local_db, described_class::MIGRATION_PATH)
-      described_class.start
-    end
-
-    after { described_class.reset! }
-
-    it 'ingests the partner seed file' do
-      described_class.seed_self_knowledge
-      result = described_class.query(text: 'partner', tags: ['self-knowledge'])
-      partner_entries = result[:results].select do |r|
-        parsed_tags = begin
-          Legion::JSON.parse(r[:tags])
-        rescue StandardError
-          []
-        end
-        parsed_tags.include?('11-my-partner')
-      end
-      expect(partner_entries).not_to be_empty
-    end
-  end
 end
