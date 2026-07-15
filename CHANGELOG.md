@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.7] - 2026-07-15
+### Removed
+- Remove .md self-knowledge seed pipeline (bonds must be earned, not implanted)
+
 ## [0.5.5] - 2026-05-15
 
 ### Added
