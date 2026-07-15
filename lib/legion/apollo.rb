@@ -39,9 +39,6 @@ module Legion
 
           @started = true
           log.info 'Legion::Apollo started'
-
-          seed_self_knowledge
-          Legion::Apollo::Local.hydrate_from_global if Legion::Apollo::Local.started?
         end
       rescue StandardError => e
         handle_exception(e, level: :error, operation: 'apollo.start')
@@ -467,13 +464,6 @@ module Legion
       rescue StandardError => e
         handle_exception(e, level: :error, operation: 'apollo.ingest_all', payload_keys: payload.keys)
         { success: false, error: e.message }
-      end
-
-      def seed_self_knowledge
-        log.info 'Apollo self-knowledge seed requested'
-        Legion::Apollo::Local.seed_self_knowledge if Legion::Apollo::Local.started?
-      rescue StandardError => e
-        handle_exception(e, level: :warn, operation: 'apollo.seed_self_knowledge')
       end
 
       def apollo_setting(key, default)

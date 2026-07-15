@@ -17,8 +17,6 @@ module Legion
       MIGRATION_PATH = File.expand_path('local/migrations', __dir__).freeze
       LIFECYCLE_MUTEX = Mutex.new
       WRITE_MUTEX = Mutex.new
-      SEED_MUTEX = Mutex.new
-      HYDRATION_MUTEX = Mutex.new
 
       class << self # rubocop:disable Metrics/ClassLength
         include Legion::Logging::Helper
@@ -33,13 +31,11 @@ module Legion
         def shutdown
           LIFECYCLE_MUTEX.synchronize do
             @started = false
-            @seeded = false
             log.info 'Legion::Apollo::Local shutdown'
           end
         rescue StandardError => e
           handle_exception(e, level: :warn, operation: 'apollo.local.shutdown')
           @started = false
-          @seeded = false
         end
 
         def started?
@@ -146,20 +142,7 @@ module Legion
         def reset!
           LIFECYCLE_MUTEX.synchronize do
             @started = false
-            @seeded = false
           end
-        end
-
-        def seed_self_knowledge
-          return unless started?
-
-          SEED_MUTEX.synchronize { seed_self_knowledge_without_lock }
-        rescue StandardError => e
-          handle_exception(e, level: :warn, operation: 'apollo.local.seed_self_knowledge')
-        end
-
-        def seeded?
-          @seeded == true
         end
 
         def query_by_tags(tags:, limit: 50) # rubocop:disable Metrics/MethodLength
@@ -232,15 +215,6 @@ module Legion
           { success: false, error: e.message }
         end
 
-        def hydrate_from_global
-          return { success: false, error: :not_started } unless started?
-
-          HYDRATION_MUTEX.synchronize { hydrate_from_global_without_lock }
-        rescue StandardError => e
-          handle_exception(e, level: :error, operation: 'apollo.local.hydrate_from_global')
-          { success: false, error: e.message }
-        end
-
         def version_chain(entry_id:, max_depth: 50) # rubocop:disable Metrics/MethodLength
           return not_started_error unless started?
 
@@ -277,49 +251,6 @@ module Legion
         end
 
         private
-
-        def self_knowledge_files
-          seed_dir = File.join(File.expand_path('../../..', __dir__), 'data', 'self-knowledge')
-          return [] unless File.directory?(seed_dir)
-
-          Dir[File.join(seed_dir, '*.md')]
-        end
-
-        def seed_files(files)
-          count = 0
-          files.each do |path|
-            count += 1 if seed_single_file(path)
-          end
-          count
-        end
-
-        def seed_single_file(path)
-          content = File.read(path)
-          return false if content.strip.empty?
-
-          tags = ['legionio', 'self-knowledge', File.basename(path, '.md')]
-          result = ingest(content: content, tags: tags, source_channel: 'self-knowledge',
-                          submitted_by: 'legion-apollo', confidence: 0.9)
-          return false unless result[:success] && result[:mode] != :deduplicated
-
-          ingest_global(content: content, tags: tags) if global_available?
-          true
-        end
-
-        def ingest_global(content:, tags:)
-          log.debug { "Apollo::Local forwarding seed entry to global tag_count=#{Array(tags).size}" }
-          Legion::Apollo.ingest(content: content, tags: tags, source_channel: 'self-knowledge',
-                                submitted_by: 'legion-apollo', confidence: 0.9, scope: :global)
-        rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'apollo.local.ingest_global_seed', tag_count: Array(tags).size)
-        end
-
-        def global_available?
-          defined?(Legion::Apollo) && Legion::Apollo.started? && Legion::Apollo.respond_to?(:ingest)
-        rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'apollo.local.global_available')
-          false
-        end
 
         def local_enabled?
           return false unless defined?(Legion::Settings)
@@ -386,58 +317,6 @@ module Legion
           Legion::Data::Local.register_migrations(name: :apollo_local, path: MIGRATION_PATH)
           @started = true
           log.info 'Legion::Apollo::Local started'
-        end
-
-        def seed_self_knowledge_without_lock
-          return if @seeded
-
-          files = self_knowledge_files
-          return if files.empty?
-
-          count = seed_files(files)
-          @seeded = true
-          log.info("Apollo::Local seeded #{count} self-knowledge files")
-        end
-
-        def hydrate_from_global_without_lock # rubocop:disable Metrics/MethodLength,Metrics/AbcSize,Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity
-          local_check = query_by_tags(tags: ['partner'])
-          if local_check[:success] && local_check[:results]&.any?
-            log.info 'Apollo::Local hydration skipped because local partner data already exists'
-            return { success: true, skipped: :local_data_exists }
-          end
-
-          unless Legion::Apollo.transport_available? || Legion::Apollo.data_available?
-            log.info 'Apollo::Local hydration skipped because global Apollo is unavailable'
-            return { success: true, skipped: :global_unavailable }
-          end
-
-          global_entries = Legion::Apollo.retrieve(text: 'partner bond', scope: :global, limit: 20)
-          entries = Array(global_entries[:entries] || global_entries[:results])
-          unless global_entries[:success] && entries.any?
-            log.info 'Apollo::Local hydration skipped because no global partner data was found'
-            return { success: true, skipped: :no_global_data }
-          end
-
-          log.info { "Apollo::Local hydration started global_count=#{entries.size}" }
-          hydrated = 0
-          entries.each do |entry|
-            entry_tags = entry[:tags].is_a?(Array) ? entry[:tags] : []
-            clean_tags = entry_tags.reject { |tag| tag == 'promoted_from_local' } + ['hydrated_from_global']
-
-            result = ingest(
-              content:        entry[:content],
-              raw_content:    entry[:raw_content] || entry[:content],
-              tags:           clean_tags,
-              confidence:     ((entry[:confidence] || 0.5) * 0.9).round(10),
-              source_channel: 'global_hydration',
-              valid_from:     entry[:valid_from],
-              valid_to:       entry[:valid_to]
-            )
-            hydrated += 1 if result[:success]
-          end
-
-          log.info { "Apollo::Local hydration completed hydrated=#{hydrated}" }
-          { success: true, hydrated: hydrated }
         end
 
         def ingest_without_lock(content:, tags:, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
