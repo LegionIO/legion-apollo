@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.12] - 2026-10-29
+
+### Fixed
+- Honor raw source and temporal-window updates during upsert. Refresh derived raw content when indexed content changes, preserve omitted explicit sources/windows, and allow explicit nil windows to clear validity bounds.
+- Remove old FTS5 terms before changing their external content row, preventing index corruption during upsert while preserving transactional rollback.
+
 ## [0.5.11] - 2026-10-29
 
 ### Fixed

@@ -169,12 +169,48 @@ RSpec.describe Legion::Apollo::Local do
       expect(query_result[:results].map { |entry| entry[:id] }).to include(row_id)
     end
 
+    it 'updates explicit raw source and temporal windows together with indexed content' do
+      described_class.upsert(content: 'Old policy', tags: ['policy'], raw_content: 'Old source',
+                             valid_from: '2026-01-01', valid_to: '2026-03-31')
+
+      described_class.upsert(content: 'New policy', tags: ['policy'], raw_content: 'New verbatim source',
+                             valid_from: '2026-04-01', valid_to: '2026-06-30')
+      current = described_class.query(text: 'New policy', as_of: '2026-05-01')
+      historical = described_class.query(text: 'New policy', as_of: '2026-02-01')
+
+      expect(current[:results].map { |row| row[:raw_content] }).to eq(['New verbatim source'])
+      expect(historical[:results]).to be_empty
+      expect(described_class.query(text: 'Old policy')[:results]).to be_empty
+    end
+
+    it 'refreshes raw content that was derived from the previous indexed content' do
+      described_class.upsert(content: 'Old summary', tags: ['summary'])
+
+      described_class.upsert(content: 'New summary', tags: ['summary'])
+
+      expect(described_class.query(text: 'New summary')[:results].first[:raw_content]).to eq('New summary')
+    end
+
+    it 'preserves explicit source and omitted validity but allows clearing validity explicitly' do
+      described_class.upsert(content: 'Summary', tags: ['source'], raw_content: 'Verbatim document',
+                             valid_from: '2026-04-01', valid_to: '2026-06-30')
+      described_class.upsert(content: 'Revised summary', tags: ['source'])
+
+      expect(described_class.query(text: 'Revised summary', as_of: '2026-02-01')[:results]).to be_empty
+      current = described_class.query(text: 'Revised summary', as_of: '2026-05-01')
+      expect(current[:results].first[:raw_content]).to eq('Verbatim document')
+
+      described_class.upsert(content: 'Revised summary', tags: ['source'], valid_from: nil, valid_to: nil)
+      unrestricted = described_class.query(text: 'Revised summary', as_of: '2026-02-01')
+      expect(unrestricted[:results].map { |row| row[:raw_content] }).to eq(['Verbatim document'])
+    end
+
     it 'rolls back the base row update when FTS rebuild fails' do
       tags = %w[social_graph reputation agent-123]
       create_result = described_class.upsert(content: 'initial state', tags: tags, source_channel: 'gaia')
       row_id = create_result[:id]
 
-      allow(described_class).to receive(:rebuild_fts_entry!).and_raise(StandardError, 'fts rebuild failure')
+      allow(described_class).to receive(:sync_fts!).and_raise(StandardError, 'fts rebuild failure')
 
       result = described_class.upsert(content: 'updated state', tags: tags, source_channel: 'gaia')
 

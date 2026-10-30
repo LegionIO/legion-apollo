@@ -755,10 +755,17 @@ module Legion
           new_hash = content_hash(content)
           now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
           expires_at = compute_expires_at
+          raw_content = opts.fetch(:raw_content) do
+            existing[:raw_content] unless existing[:raw_content] == existing[:content]
+          end
 
           db.transaction do
+            db.run("DELETE FROM local_knowledge_fts WHERE rowid = #{existing[:id]}")
             db[:local_knowledge].where(id: existing[:id]).update(
               content:                 content,
+              raw_content:             normalize_raw_content_input(raw_content, fallback: content),
+              valid_from:              normalize_temporal_value(opts.fetch(:valid_from, existing[:valid_from])),
+              valid_to:                normalize_temporal_value(opts.fetch(:valid_to, existing[:valid_to])),
               content_hash:            new_hash,
               tags:                    tags_json,
               embedding:               embedding_fields[:embedding],
@@ -774,16 +781,10 @@ module Legion
               identity_id:             opts.fetch(:identity_id, existing[:identity_id]),
               updated_at:              now
             )
-            rebuild_fts_entry!(existing[:id], content, tags_json)
+            sync_fts!(existing[:id], content, tags_json)
           end
           log.info { "Apollo::Local upsert updated id=#{existing[:id]} hash=#{new_hash}" }
           { success: true, mode: :updated, id: existing[:id] }
-        end
-
-        def rebuild_fts_entry!(id, content, tags_json)
-          db.run("DELETE FROM local_knowledge_fts WHERE rowid = #{id}")
-          sync_fts!(id, content, tags_json)
-          log.debug { "Apollo::Local FTS rebuilt id=#{id}" }
         end
 
         def project_tier(entry, tier) # rubocop:disable Metrics/MethodLength
