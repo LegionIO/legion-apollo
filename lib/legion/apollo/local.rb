@@ -42,12 +42,17 @@ module Legion
           @started == true
         end
 
-        def ingest(content:, tags: [], access_scope: 'global', **opts) # rubocop:disable Metrics/MethodLength
+        def ingest(content:, tags: [], access_scope: 'global', **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           return not_started_error unless started?
 
           tags = normalize_tags_input(tags)
+          content = normalize_text_input(content)
+          hash = content_hash(content)
+          return deduplicated_ingest(hash) if WRITE_MUTEX.synchronize { duplicate?(hash) }
+
+          embedding_fields = embedding_columns(content, opts)
           WRITE_MUTEX.synchronize do
-            ingest_without_lock(content: content, tags: tags,
+            ingest_without_lock(content: content, tags: tags, embedding_fields: embedding_fields,
                                 **inject_identity_context(opts).merge(access_scope: access_scope))
           end
         rescue StandardError => e
@@ -67,14 +72,23 @@ module Legion
           sorted_tags = normalize_tags_input(tags).sort
           tag_json = Legion::JSON.dump(sorted_tags)
           merged_opts = inject_identity_context(opts).merge(access_scope: access_scope)
+          content = normalize_text_input(content)
+          hash = content_hash(content)
+          duplicate = WRITE_MUTEX.synchronize do
+            db[:local_knowledge].where(tags: tag_json).empty? && duplicate?(hash)
+          end
+          return deduplicated_ingest(hash) if duplicate
+
+          embedding_fields = embedding_columns(content, merged_opts)
           WRITE_MUTEX.synchronize do
             existing = db[:local_knowledge].where(tags: tag_json).first
 
             if existing
-              update_upsert_entry(existing, content, tag_json, merged_opts)
+              update_upsert_entry(existing, content, tag_json, merged_opts, embedding_fields)
             else
-              result = ingest_without_lock(content: content, tags: sorted_tags, **merged_opts)
-              result[:mode] = :inserted if result[:success] && result[:mode] != :deduplicated
+              result = ingest_without_lock(content: content, tags: sorted_tags,
+                                           embedding_fields: embedding_fields, **merged_opts)
+              result[:mode] = :inserted if result[:mode] == :local
               result
             end
           end
@@ -319,7 +333,7 @@ module Legion
           log.info 'Legion::Apollo::Local started'
         end
 
-        def ingest_without_lock(content:, tags:, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+        def ingest_without_lock(content:, tags:, embedding_fields:, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           content = normalize_text_input(content)
           raw_content = normalize_raw_content_input(opts[:raw_content], fallback: content)
           hash = content_hash(content)
@@ -334,6 +348,7 @@ module Legion
           metadata = opts.dup
           metadata.delete(:raw_content)
           row = build_ingest_row(content: content, raw_content: raw_content, hash: hash, tags: tags, **metadata)
+                .merge(embedding_fields)
           id = persist_ingest_row(row, metadata)
           mark_parent_superseded(metadata[:parent_knowledge_id]) if metadata[:parent_knowledge_id]
 
@@ -356,7 +371,7 @@ module Legion
             opts:               opts,
             is_inference:       is_inference,
             default_confidence: default_confidence
-          ).merge(embedding_columns(content, opts)).merge(timestamp_columns)
+          ).merge(timestamp_columns)
         end
 
         def ingest_metadata_columns(context)
@@ -726,10 +741,9 @@ module Legion
           end.first(limit)
         end
 
-        def update_upsert_entry(existing, content, tags_json, opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+        def update_upsert_entry(existing, content, tags_json, opts, embedding_fields) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           content = normalize_text_input(content)
           new_hash = content_hash(content)
-          embedding, embedded_at = generate_embedding(content)
           now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
           expires_at = compute_expires_at
 
@@ -738,8 +752,8 @@ module Legion
               content:                 content,
               content_hash:            new_hash,
               tags:                    tags_json,
-              embedding:               embedding ? Legion::JSON.dump(embedding) : nil,
-              embedded_at:             embedded_at,
+              embedding:               embedding_fields[:embedding],
+              embedded_at:             embedding_fields[:embedded_at],
               confidence:              opts.fetch(:confidence, existing[:confidence]),
               expires_at:              expires_at,
               source_channel:          opts.fetch(:source_channel, existing[:source_channel]),

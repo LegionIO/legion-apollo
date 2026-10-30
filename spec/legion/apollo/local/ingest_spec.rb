@@ -99,15 +99,26 @@ RSpec.describe 'Apollo::Local ingest' do
     expect(db[:local_knowledge].count).to eq(1)
   end
 
-  it 'deduplicates when the unique constraint is hit after the duplicate precheck' do
-    Legion::Apollo::Local.ingest(content: 'same content', tags: %w[a])
-    allow(Legion::Apollo::Local).to receive(:duplicate?).and_return(false, true)
+  it 'deduplicates concurrent ingests after both embeddings complete' do
+    entered = Queue.new
+    release = Queue.new
+    stub_const('Legion::LLM', Module.new)
+    allow(Legion::LLM).to receive(:can_embed?).and_return(true)
+    allow(Legion::LLM).to receive(:embed) do |_text|
+      entered << true
+      release.pop
+      { vector: [1.0, 0.0] }
+    end
+    writers = Array.new(2) { Thread.new { Legion::Apollo::Local.ingest(content: 'same content') } }
+    2.times { expect(entered.pop(timeout: 5)).to be true }
+    2.times { release << true }
 
-    result = Legion::Apollo::Local.ingest(content: 'same content', tags: %w[b])
-
-    expect(result[:success]).to be true
-    expect(result[:mode]).to eq(:deduplicated)
+    results = writers.map(&:value)
+    expect(results.map { |result| result[:mode] }).to contain_exactly(:local, :deduplicated)
     expect(db[:local_knowledge].count).to eq(1)
+  ensure
+    2.times { release << true }
+    writers&.each(&:join)
   end
 
   it 'sets expires_at based on retention_years setting' do
@@ -165,6 +176,34 @@ RSpec.describe 'Apollo::Local ingest' do
     expect(row[:embedded_at]).not_to be_nil
     parsed = Legion::JSON.parse(row[:embedding])
     expect(parsed.size).to eq(1024)
+  end
+
+  it 'allows another write to finish while ingest and upsert embeddings are waiting' do
+    entered = Queue.new
+    release = Queue.new
+    stub_const('Legion::LLM', Module.new)
+    allow(Legion::LLM).to receive(:can_embed?).and_return(true)
+    allow(Legion::LLM).to receive(:embed) do |text|
+      if text.start_with?('slow')
+        entered << text
+        release.pop
+      end
+      { vector: [1.0, 0.0] }
+    end
+
+    writers = [
+      Thread.new { Legion::Apollo::Local.ingest(content: 'slow ingest') },
+      Thread.new { Legion::Apollo::Local.upsert(content: 'slow upsert', tags: ['upsert']) }
+    ]
+    expect(entered.pop(timeout: 5)).not_to be_nil
+    expect(entered.pop(timeout: 5)).not_to be_nil
+    fast_writer = Thread.new { Legion::Apollo::Local.ingest(content: 'fast write') }
+    expect(fast_writer.join(5)).to eq(fast_writer)
+    expect(fast_writer.value).to include(success: true)
+  ensure
+    2.times { release << true }
+    writers&.each(&:join)
+    fast_writer&.join
   end
 
   it 'rolls back the base row when FTS sync fails' do

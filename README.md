@@ -2,7 +2,7 @@
 
 Apollo is the LegionIO knowledge client. It gives extensions one API for writing, retrieving, and merging knowledge across the global Apollo service and the node-local SQLite store.
 
-**Version**: 0.5.2
+**Version**: 0.5.8
 
 `legion-apollo` provides `query`, `ingest`, and `retrieve` with smart routing: co-located `lex-apollo`, RabbitMQ transport, node-local SQLite, or graceful failure. `Apollo::Local` mirrors the same public API for offline and low-latency retrieval without requiring remote infrastructure.
 
@@ -58,6 +58,7 @@ Features:
 - `raw_content` preservation for verbatim source text
 - `valid_from` / `valid_to` temporal windows with `as_of:` query filtering
 - Optional LLM embeddings (1024-dim) with cosine rerank when `Legion::LLM.can_embed?`
+- Embedding generation runs outside the local write mutex; persistence and duplicate checks remain serialized
 - TTL expiry (default 5-year retention)
 - FTS5 full-text search with `ILIKE` fallback
 - Null-byte removal and invalid UTF-8 scrubbing before persistence or backend routing

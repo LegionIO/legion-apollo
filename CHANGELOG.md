@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.8] - 2026-10-29
+
+### Fixed
+- Generate local ingest/upsert embeddings outside the write mutex so slow providers do not serialize unrelated writes; retain atomic duplicate checks and persistence.
+
 ## [0.5.7] - 2026-07-15
 ### Removed
 - Remove .md self-knowledge seed pipeline (bonds must be earned, not implanted)
