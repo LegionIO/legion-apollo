@@ -369,23 +369,26 @@ module Legion
         payload.merge(text: normalized_text, query: normalized_text)
       end
 
-      def normalize_local_entries(entries) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+      def normalize_local_entries(entries) # rubocop:disable Metrics/AbcSize
         entries.map do |e|
-          hash = e[:content_hash] || Digest::MD5.hexdigest(e[:content].to_s.strip.downcase.gsub(/\s+/, ' '))
-          tags = if e[:tags].is_a?(String)
-                   begin
-                     Legion::JSON.parse(e[:tags])
-                   rescue StandardError => ex
-                     handle_exception(ex, level: :debug, operation: 'apollo.normalize_local_entries', entry_id: e[:id])
-                     []
-                   end
-                 else
-                   Array(e[:tags])
-                 end
-          { id: e[:id], content: e[:content], raw_content: e[:raw_content] || e[:content], content_hash: hash,
-            confidence: e[:confidence] || 0.5, content_type: 'fact', tags: tags, source: :local,
-            valid_from: e[:valid_from], valid_to: e[:valid_to] }
+          content = e[:content] || e[:summary]
+          hash = e[:content_hash] || Digest::MD5.hexdigest(content.to_s.strip.downcase.gsub(/\s+/, ' '))
+          tags = normalize_local_entry_tags(e)
+          entry = { id: e[:id], content: content, raw_content: e[:raw_content] || content, content_hash: hash,
+                    confidence: e[:confidence] || 0.5, content_type: 'fact', tags: tags, source: :local,
+                    valid_from: e[:valid_from], valid_to: e[:valid_to] }
+          entry[:summary] = e[:summary] if e.key?(:summary)
+          entry
         end
+      end
+
+      def normalize_local_entry_tags(entry)
+        return Array(entry[:tags]) unless entry[:tags].is_a?(String)
+
+        Legion::JSON.parse(entry[:tags])
+      rescue StandardError => e
+        handle_exception(e, level: :debug, operation: 'apollo.normalize_local_entries', entry_id: entry[:id])
+        []
       end
 
       def normalize_global_entries(entries)

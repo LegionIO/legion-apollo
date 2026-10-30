@@ -1,5 +1,36 @@
 # Changelog
 
+## [0.5.13] - 2026-10-29
+
+### Fixed
+- Preserve L0/L1 summaries when normalizing public local and merged retrieval results, exposing the projected text as content instead of nil.
+
+## [0.5.12] - 2026-10-29
+
+### Fixed
+- Honor raw source and temporal-window updates during upsert. Refresh derived raw content when indexed content changes, preserve omitted explicit sources/windows, and allow explicit nil windows to clear validity bounds.
+- Remove old FTS5 terms before changing their external content row, preventing index corruption during upsert while preserving transactional rollback.
+
+## [0.5.11] - 2026-10-29
+
+### Fixed
+- Renew expired content on duplicate ingestion while preserving its ID, source, tags, and deduplicated response; active duplicates retain their original expiration.
+
+## [0.5.10] - 2026-10-29
+
+### Fixed
+- Apply local eligibility filters before filling the candidate budget, streaming full-text, blank, and fallback searches so rejected rows cannot hide later matching knowledge.
+
+## [0.5.9] - 2026-10-29
+
+### Fixed
+- Return logged failure results from local graph operations when the optional database is absent, disconnected, or has no usable connection, instead of leaking lifecycle exceptions.
+
+## [0.5.8] - 2026-10-29
+
+### Fixed
+- Generate local ingest/upsert embeddings outside the write mutex so slow providers do not serialize unrelated writes; retain atomic duplicate checks and persistence.
+
 ## [0.5.7] - 2026-07-15
 ### Removed
 - Remove .md self-knowledge seed pipeline (bonds must be earned, not implanted)

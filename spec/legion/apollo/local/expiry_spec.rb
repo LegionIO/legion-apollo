@@ -49,6 +49,40 @@ RSpec.describe 'Apollo::Local temporal expiry metadata' do
     expect(row[:expires_at]).to eq(future)
   end
 
+  it 'restores an expired duplicate without changing its identity or stored source' do
+    past = (Time.now.utc - 3600).strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+    original = Legion::Apollo::Local.ingest(content: 'Retained knowledge', raw_content: 'Original source',
+                                            expires_at: past, tags: ['original'])
+    expect(Legion::Apollo::Local.query(text: 'Retained knowledge')[:results]).to be_empty
+
+    result = Legion::Apollo::Local.ingest(content: 'Retained knowledge', tags: ['replacement'])
+    visible = Legion::Apollo::Local.query(text: 'Retained knowledge')[:results]
+
+    expect(result).to include(success: true, mode: :deduplicated)
+    expect(visible.map { |row| row[:id] }).to eq([original[:id]])
+    expect(visible.first[:raw_content]).to eq('Original source')
+    expect(Legion::JSON.parse(visible.first[:tags])).to eq(['original'])
+  end
+
+  it 'honors an explicit expiry when restoring a duplicate' do
+    past = (Time.now.utc - 3600).strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+    future = (Time.now.utc + 3600).strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+    Legion::Apollo::Local.ingest(content: 'Short renewal', expires_at: past)
+
+    Legion::Apollo::Local.ingest(content: 'Short renewal', expires_at: future)
+
+    expect(db[:local_knowledge].first[:expires_at]).to eq(future)
+  end
+
+  it 'does not extend the retention of an active duplicate' do
+    future = (Time.now.utc + 3600).strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+    Legion::Apollo::Local.ingest(content: 'Active knowledge', expires_at: future)
+
+    Legion::Apollo::Local.ingest(content: 'Active knowledge')
+
+    expect(db[:local_knowledge].first[:expires_at]).to eq(future)
+  end
+
   it 'defaults forget_reason to nil' do
     Legion::Apollo::Local.ingest(content: 'Regular fact', tags: %w[general])
     row = db[:local_knowledge].where(content: 'Regular fact').first

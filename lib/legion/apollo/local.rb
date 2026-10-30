@@ -42,12 +42,18 @@ module Legion
           @started == true
         end
 
-        def ingest(content:, tags: [], access_scope: 'global', **opts) # rubocop:disable Metrics/MethodLength
+        def ingest(content:, tags: [], access_scope: 'global', **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           return not_started_error unless started?
 
           tags = normalize_tags_input(tags)
+          content = normalize_text_input(content)
+          hash = content_hash(content)
+          duplicate = WRITE_MUTEX.synchronize { deduplicated_ingest(hash, expires_at: opts[:expires_at]) }
+          return duplicate if duplicate
+
+          embedding_fields = embedding_columns(content, opts)
           WRITE_MUTEX.synchronize do
-            ingest_without_lock(content: content, tags: tags,
+            ingest_without_lock(content: content, tags: tags, embedding_fields: embedding_fields,
                                 **inject_identity_context(opts).merge(access_scope: access_scope))
           end
         rescue StandardError => e
@@ -67,14 +73,26 @@ module Legion
           sorted_tags = normalize_tags_input(tags).sort
           tag_json = Legion::JSON.dump(sorted_tags)
           merged_opts = inject_identity_context(opts).merge(access_scope: access_scope)
+          content = normalize_text_input(content)
+          hash = content_hash(content)
+          duplicate = WRITE_MUTEX.synchronize do
+            if db[:local_knowledge].where(tags: tag_json).empty?
+              deduplicated_ingest(hash,
+                                  expires_at: opts[:expires_at])
+            end
+          end
+          return duplicate if duplicate
+
+          embedding_fields = embedding_columns(content, merged_opts)
           WRITE_MUTEX.synchronize do
             existing = db[:local_knowledge].where(tags: tag_json).first
 
             if existing
-              update_upsert_entry(existing, content, tag_json, merged_opts)
+              update_upsert_entry(existing, content, tag_json, merged_opts, embedding_fields)
             else
-              result = ingest_without_lock(content: content, tags: sorted_tags, **merged_opts)
-              result[:mode] = :inserted if result[:success] && result[:mode] != :deduplicated
+              result = ingest_without_lock(content: content, tags: sorted_tags,
+                                           embedding_fields: embedding_fields, **merged_opts)
+              result[:mode] = :inserted if result[:mode] == :local
               result
             end
           end
@@ -104,13 +122,15 @@ module Legion
           end
           log.debug { "Apollo::Local query limit=#{limit} min_confidence=#{min_confidence} tags=#{Array(tags).size}" }
 
-          candidates = fts_search(text, limit: limit * multiplier, as_of: as_of)
           include_inferences = opts.fetch(:include_inferences, true)
           include_history = opts.fetch(:include_history, false)
-          candidates = filter_candidates(candidates, min_confidence: min_confidence, tags: tags,
-                                                     options: { include_inferences: include_inferences,
-                                                                include_history: include_history, as_of: as_of,
-                                                                requesting_principal_id: requesting_principal_id })
+          candidates = fts_search(text, as_of: as_of) do |dataset|
+            filter_candidates(dataset.lazy, min_confidence: min_confidence, tags: tags,
+                                            options: { include_inferences: include_inferences,
+                                                       include_history: include_history, as_of: as_of,
+                                                       requesting_principal_id: requesting_principal_id })
+              .take(limit * multiplier).force
+          end
           candidates = cosine_rerank(text, candidates) if can_rerank?
           results = candidates.first(limit)
 
@@ -303,13 +323,6 @@ module Legion
           Digest::MD5.hexdigest(normalized)
         end
 
-        def duplicate?(hash)
-          db[:local_knowledge].where(content_hash: hash).any?
-        rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'apollo.local.duplicate_check', hash: hash)
-          false
-        end
-
         def start_without_lock
           return if @started
           return unless local_enabled? && data_local_available?
@@ -319,11 +332,12 @@ module Legion
           log.info 'Legion::Apollo::Local started'
         end
 
-        def ingest_without_lock(content:, tags:, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+        def ingest_without_lock(content:, tags:, embedding_fields:, **opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           content = normalize_text_input(content)
           raw_content = normalize_raw_content_input(opts[:raw_content], fallback: content)
           hash = content_hash(content)
-          return deduplicated_ingest(hash) if duplicate?(hash)
+          duplicate = deduplicated_ingest(hash, expires_at: opts[:expires_at])
+          return duplicate if duplicate
 
           log.info do
             "Apollo::Local ingest accepted content_length=#{content.to_s.length} " \
@@ -334,15 +348,17 @@ module Legion
           metadata = opts.dup
           metadata.delete(:raw_content)
           row = build_ingest_row(content: content, raw_content: raw_content, hash: hash, tags: tags, **metadata)
+                .merge(embedding_fields)
           id = persist_ingest_row(row, metadata)
           mark_parent_superseded(metadata[:parent_knowledge_id]) if metadata[:parent_knowledge_id]
 
           log.info { "Apollo::Local ingest stored id=#{id} hash=#{hash}" }
           { success: true, mode: :local, id: id }
         rescue Sequel::UniqueConstraintViolation
-          raise unless duplicate?(hash)
+          duplicate = deduplicated_ingest(hash, expires_at: opts[:expires_at])
+          raise unless duplicate
 
-          deduplicated_ingest(hash)
+          duplicate
         end
 
         def build_ingest_row(content:, raw_content:, hash:, tags:, **opts) # rubocop:disable Metrics/MethodLength
@@ -356,7 +372,7 @@ module Legion
             opts:               opts,
             is_inference:       is_inference,
             default_confidence: default_confidence
-          ).merge(embedding_columns(content, opts)).merge(timestamp_columns)
+          ).merge(timestamp_columns)
         end
 
         def ingest_metadata_columns(context)
@@ -424,7 +440,17 @@ module Legion
           handle_exception(e, level: :warn, operation: 'apollo.local.create_source_link', entry_id: entry_id)
         end
 
-        def deduplicated_ingest(hash)
+        def deduplicated_ingest(hash, expires_at: nil) # rubocop:disable Metrics/MethodLength
+          dataset = db[:local_knowledge].where(content_hash: hash)
+          existing = dataset.select(:expires_at).first
+          return unless existing
+
+          now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+          previous_expiry = existing[:expires_at]
+          if previous_expiry && previous_expiry <= now
+            dataset.where(Sequel.lit('expires_at <= ?', now))
+                   .update(expires_at: expires_at || compute_expires_at, updated_at: now)
+          end
           log.info { "Apollo::Local ingest deduplicated hash=#{hash}" }
           { success: true, mode: :deduplicated }
         end
@@ -494,33 +520,31 @@ module Legion
           Legion::JSON.dump(normalize_tags_input(tags))
         end
 
-        def fts_search(text, limit:, as_of: nil) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+        def fts_search(text, as_of: nil) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
-          return active_knowledge_dataset(now: now, as_of: as_of).limit(limit).all if text.to_s.strip.empty?
+          return yield active_knowledge_dataset(now: now, as_of: as_of) if text.to_s.strip.empty?
 
           tokens = text.to_s.scan(/[\p{L}\p{N}_]+/)
-          return ilike_search(text, now: now, limit: limit, as_of: as_of) if tokens.empty?
+          return yield ilike_search(text, now: now, as_of: as_of) if tokens.empty?
 
           escaped = tokens.map { |t| %("#{t}") }.join(' ')
           temporal_sql, temporal_params = temporal_window_sql(as_of, table_alias: 'lk')
-          db.fetch(
+          yield db.fetch(
             'SELECT lk.* FROM local_knowledge lk ' \
             'INNER JOIN local_knowledge_fts fts ON lk.id = fts.rowid ' \
             "WHERE local_knowledge_fts MATCH ? AND lk.expires_at > ?#{temporal_sql} " \
-            'ORDER BY fts.rank LIMIT ?',
-            escaped, now, *temporal_params, limit
-          ).all
+            'ORDER BY fts.rank',
+            escaped, now, *temporal_params
+          )
         rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'apollo.local.fts_search', limit: limit, fallback: :ilike)
-          ilike_search(text, now: Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ'), limit: limit, as_of: as_of)
+          handle_exception(e, level: :debug, operation: 'apollo.local.fts_search', fallback: :ilike)
+          yield ilike_search(text, now: Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ'), as_of: as_of)
         end
 
-        def ilike_search(text, now:, limit:, as_of: nil)
+        def ilike_search(text, now:, as_of: nil)
           safe_text = text.to_s.gsub('\\', '\\\\\\\\').gsub('%', '\%').gsub('_', '\_')
           active_knowledge_dataset(now: now, as_of: as_of)
             .where(Sequel.lit("content LIKE ? ESCAPE '\\' COLLATE NOCASE", "%#{safe_text}%"))
-            .limit(limit)
-            .all
         end
 
         def filter_candidates(candidates, min_confidence:, tags:, options: {}) # rubocop:disable Metrics/CyclomaticComplexity,Metrics/PerceivedComplexity,Metrics/MethodLength,Metrics/AbcSize
@@ -726,20 +750,26 @@ module Legion
           end.first(limit)
         end
 
-        def update_upsert_entry(existing, content, tags_json, opts) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
+        def update_upsert_entry(existing, content, tags_json, opts, embedding_fields) # rubocop:disable Metrics/MethodLength,Metrics/AbcSize
           content = normalize_text_input(content)
           new_hash = content_hash(content)
-          embedding, embedded_at = generate_embedding(content)
           now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
           expires_at = compute_expires_at
+          raw_content = opts.fetch(:raw_content) do
+            existing[:raw_content] unless existing[:raw_content] == existing[:content]
+          end
 
           db.transaction do
+            db.run("DELETE FROM local_knowledge_fts WHERE rowid = #{existing[:id]}")
             db[:local_knowledge].where(id: existing[:id]).update(
               content:                 content,
+              raw_content:             normalize_raw_content_input(raw_content, fallback: content),
+              valid_from:              normalize_temporal_value(opts.fetch(:valid_from, existing[:valid_from])),
+              valid_to:                normalize_temporal_value(opts.fetch(:valid_to, existing[:valid_to])),
               content_hash:            new_hash,
               tags:                    tags_json,
-              embedding:               embedding ? Legion::JSON.dump(embedding) : nil,
-              embedded_at:             embedded_at,
+              embedding:               embedding_fields[:embedding],
+              embedded_at:             embedding_fields[:embedded_at],
               confidence:              opts.fetch(:confidence, existing[:confidence]),
               expires_at:              expires_at,
               source_channel:          opts.fetch(:source_channel, existing[:source_channel]),
@@ -751,16 +781,10 @@ module Legion
               identity_id:             opts.fetch(:identity_id, existing[:identity_id]),
               updated_at:              now
             )
-            rebuild_fts_entry!(existing[:id], content, tags_json)
+            sync_fts!(existing[:id], content, tags_json)
           end
           log.info { "Apollo::Local upsert updated id=#{existing[:id]} hash=#{new_hash}" }
           { success: true, mode: :updated, id: existing[:id] }
-        end
-
-        def rebuild_fts_entry!(id, content, tags_json)
-          db.run("DELETE FROM local_knowledge_fts WHERE rowid = #{id}")
-          sync_fts!(id, content, tags_json)
-          log.debug { "Apollo::Local FTS rebuilt id=#{id}" }
         end
 
         def project_tier(entry, tier) # rubocop:disable Metrics/MethodLength

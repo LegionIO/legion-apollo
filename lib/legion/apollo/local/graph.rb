@@ -12,6 +12,7 @@ module Legion
       # Graph traversal expands one frontier batch per depth to avoid per-node queries.
       module Graph # rubocop:disable Metrics/ModuleLength
         VALID_RELATION_TYPES = %w[AFFECTS OWNED_BY DEPENDS_ON RELATED_TO SUPERSEDES].freeze
+        class DatabaseUnavailable < StandardError; end
 
         class << self # rubocop:disable Metrics/ClassLength
           include Legion::Logging::Helper
@@ -32,7 +33,7 @@ module Legion
             end
             log.info { "Apollo::Local::Graph created entity id=#{id} type=#{type} name=#{name}" }
             { success: true, id: id }
-          rescue Sequel::Error => e
+          rescue DatabaseUnavailable, Sequel::Error => e
             handle_exception(
               e,
               level:       :error,
@@ -49,7 +50,7 @@ module Legion
 
             log.debug { "Apollo::Local::Graph found entity id=#{id}" }
             { success: true, entity: decode_entity(row) }
-          rescue Sequel::Error => e
+          rescue DatabaseUnavailable, Sequel::Error => e
             handle_exception(e, level: :error, operation: 'apollo.local.graph.find_entity', entity_id: id)
             { success: false, error: e.message }
           end
@@ -58,7 +59,7 @@ module Legion
             rows = db[:local_entities].where(entity_type: type.to_s).limit(limit).all
             log.debug { "Apollo::Local::Graph found entities type=#{type} count=#{rows.size}" }
             { success: true, entities: rows.map { |r| decode_entity(r) }, count: rows.size }
-          rescue Sequel::Error => e
+          rescue DatabaseUnavailable, Sequel::Error => e
             handle_exception(
               e,
               level:       :error,
@@ -73,7 +74,7 @@ module Legion
             rows = db[:local_entities].where(name: name.to_s).limit(limit).all
             log.debug { "Apollo::Local::Graph found entities name=#{name} count=#{rows.size}" }
             { success: true, entities: rows.map { |r| decode_entity(r) }, count: rows.size }
-          rescue Sequel::Error => e
+          rescue DatabaseUnavailable, Sequel::Error => e
             handle_exception(
               e,
               level:     :error,
@@ -95,7 +96,7 @@ module Legion
 
             log.info { "Apollo::Local::Graph updated entity id=#{id}" }
             { success: true, id: id }
-          rescue Sequel::Error => e
+          rescue DatabaseUnavailable, Sequel::Error => e
             handle_exception(
               e,
               level:     :error,
@@ -112,7 +113,7 @@ module Legion
 
             log.info { "Apollo::Local::Graph deleted entity id=#{id}" }
             result
-          rescue Sequel::Error => e
+          rescue DatabaseUnavailable, Sequel::Error => e
             handle_exception(e, level: :error, operation: 'apollo.local.graph.delete_entity', entity_id: id)
             { success: false, error: e.message }
           end
@@ -132,6 +133,10 @@ module Legion
                 "target_id=#{target_id} relation_type=#{normalized_relation_type}"
             end
             { success: true, id: id }
+          rescue DatabaseUnavailable => e
+            handle_exception(e, level: :error, operation: 'apollo.local.graph.create_relationship',
+                                source_id: source_id, target_id: target_id)
+            { success: false, error: e.message }
           rescue Sequel::UniqueConstraintViolation => e
             duplicate = handle_duplicate_relationship(source_id, target_id, normalized_relation_type)
             return duplicate if duplicate
@@ -170,7 +175,7 @@ module Legion
                 "relation_type=#{relation_type || 'any'} count=#{rows.size}"
             end
             { success: true, relationships: rows.map { |r| decode_relationship(r) }, count: rows.size }
-          rescue Sequel::Error => e
+          rescue DatabaseUnavailable, Sequel::Error => e
             handle_exception(
               e,
               level:         :error,
@@ -188,7 +193,7 @@ module Legion
 
             log.info { "Apollo::Local::Graph deleted relationship id=#{id}" }
             { success: true, id: id }
-          rescue Sequel::Error => e
+          rescue DatabaseUnavailable, Sequel::Error => e
             handle_exception(e, level: :error, operation: 'apollo.local.graph.delete_relationship', relationship_id: id)
             { success: false, error: e.message }
           end
@@ -217,7 +222,7 @@ module Legion
               edges:   edge_rows.map   { |r| decode_relationship(r) },
               count:   entity_rows.size
             }
-          rescue Sequel::Error => e
+          rescue DatabaseUnavailable, Sequel::Error => e
             handle_exception(
               e,
               level:         :error,
@@ -357,7 +362,14 @@ module Legion
           end
 
           def db
-            Legion::Data::Local.connection
+            unless defined?(Legion::Data::Local) && Legion::Data::Local.connected?
+              raise DatabaseUnavailable, 'local database unavailable'
+            end
+
+            connection = Legion::Data::Local.connection
+            return connection if connection && !(connection.respond_to?(:closed?) && connection.closed?)
+
+            raise DatabaseUnavailable, 'local database unavailable'
           end
 
           def timestamp

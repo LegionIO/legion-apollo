@@ -81,6 +81,37 @@ RSpec.describe 'Apollo::Local query' do
     end
   end
 
+  it 'finds eligible blank-query entries beyond the raw candidate budget' do
+    Legion::Apollo::Local.ingest(content: 'Eligible tagged entry', tags: ['eligible'])
+
+    result = Legion::Apollo::Local.query(text: '', tags: ['eligible'], limit: 1)
+
+    expect(result[:results].map { |row| row[:content] }).to eq(['Eligible tagged entry'])
+  end
+
+  it 'filters confidence before limiting full-text candidates' do
+    3.times do |index|
+      Legion::Apollo::Local.ingest(content: "needle #{index}", confidence: 0.1)
+    end
+    content = 'needle with a longer explanation that still meets the requested confidence'
+    Legion::Apollo::Local.ingest(content: content, confidence: 1.0)
+
+    result = Legion::Apollo::Local.query(text: 'needle', min_confidence: 0.8, limit: 1)
+
+    expect(result[:results].map { |row| row[:content] }).to eq([content])
+  end
+
+  it 'filters confidence before limiting punctuation fallback candidates' do
+    3.times do |index|
+      Legion::Apollo::Local.ingest(content: "%% low #{index}", confidence: 0.1)
+    end
+    Legion::Apollo::Local.ingest(content: '%% eligible', confidence: 1.0)
+
+    result = Legion::Apollo::Local.query(text: '%%', min_confidence: 0.8, limit: 1)
+
+    expect(result[:results].map { |row| row[:content] }).to eq(['%% eligible'])
+  end
+
   it 'excludes expired entries' do
     now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
     past = (Time.now.utc - 3600).strftime('%Y-%m-%dT%H:%M:%S.%LZ')

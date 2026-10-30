@@ -21,6 +21,31 @@ RSpec.describe Legion::Apollo::Local::Graph do
     end)
   end
 
+  it 'returns a failed result when the optional local database is absent' do
+    hide_const('Legion::Data::Local')
+
+    expect(described_class.find_entity(id: 1)).to include(success: false)
+    expect(described_class.create_entity(type: 'service', name: 'unavailable')).to include(success: false)
+    expect(described_class.traverse(entity_id: 1)).to include(success: false)
+  end
+
+  it 'recovers from a missing connection without caching the unavailable state' do
+    allow(Legion::Data::Local).to receive(:connection).and_return(nil)
+    expect(described_class.create_entity(type: 'service', name: 'unavailable')).to include(success: false)
+
+    allow(Legion::Data::Local).to receive(:connection).and_return(db)
+    result = described_class.create_entity(type: 'service', name: 'restored')
+    expect(result[:success]).to be true
+    expect(described_class.find_entity(id: result[:id]).dig(:entity, :name)).to eq('restored')
+  end
+
+  it 'does not write through a disconnected local database' do
+    allow(Legion::Data::Local).to receive(:connected?).and_return(false)
+
+    expect(described_class.create_entity(type: 'service', name: 'disconnected')).to include(success: false)
+    expect(db[:local_entities].count).to eq(0)
+  end
+
   # --- helpers ---
   def make_entity(type: 'service', name: 'svc', domain: nil, attributes: {})
     described_class.create_entity(type: type, name: name, domain: domain, attributes: attributes)
