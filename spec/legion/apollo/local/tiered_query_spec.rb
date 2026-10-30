@@ -62,6 +62,18 @@ RSpec.describe 'Apollo::Local tiered retrieval' do
     expect(result[:tier]).to eq(:l1)
   end
 
+  it 'preserves projected summaries through local and merged public retrieval' do
+    Legion::Apollo.start
+
+    local = Legion::Apollo.retrieve(text: 'alpha', scope: :local, tier: :l0)
+    merged = Legion::Apollo.retrieve(text: 'alpha', scope: :all, tier: :l1)
+
+    expect(local[:entries].first).to include(content: 'Short summary', summary: 'Short summary',
+                                             raw_content: 'Short summary')
+    expect(merged[:entries].first).to include(content: 'Medium paragraph summary of the content',
+                                              summary: 'Medium paragraph summary of the content')
+  end
+
   it 'falls back to truncated content when l0 summary missing' do
     beta_content = ('beta ' * 60).strip
     Legion::Apollo::Local.ingest(content: beta_content, tags: %w[test])

@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.13] - 2026-10-29
+
+### Fixed
+- Preserve L0/L1 summaries when normalizing public local and merged retrieval results, exposing the projected text as content instead of nil.
+
 ## [0.5.12] - 2026-10-29
 
 ### Fixed
