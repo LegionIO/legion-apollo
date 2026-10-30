@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.11] - 2026-10-29
+
+### Fixed
+- Renew expired content on duplicate ingestion while preserving its ID, source, tags, and deduplicated response; active duplicates retain their original expiration.
+
 ## [0.5.10] - 2026-10-29
 
 ### Fixed

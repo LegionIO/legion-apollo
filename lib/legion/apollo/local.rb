@@ -48,7 +48,8 @@ module Legion
           tags = normalize_tags_input(tags)
           content = normalize_text_input(content)
           hash = content_hash(content)
-          return deduplicated_ingest(hash) if WRITE_MUTEX.synchronize { duplicate?(hash) }
+          duplicate = WRITE_MUTEX.synchronize { deduplicated_ingest(hash, expires_at: opts[:expires_at]) }
+          return duplicate if duplicate
 
           embedding_fields = embedding_columns(content, opts)
           WRITE_MUTEX.synchronize do
@@ -75,9 +76,12 @@ module Legion
           content = normalize_text_input(content)
           hash = content_hash(content)
           duplicate = WRITE_MUTEX.synchronize do
-            db[:local_knowledge].where(tags: tag_json).empty? && duplicate?(hash)
+            if db[:local_knowledge].where(tags: tag_json).empty?
+              deduplicated_ingest(hash,
+                                  expires_at: opts[:expires_at])
+            end
           end
-          return deduplicated_ingest(hash) if duplicate
+          return duplicate if duplicate
 
           embedding_fields = embedding_columns(content, merged_opts)
           WRITE_MUTEX.synchronize do
@@ -319,13 +323,6 @@ module Legion
           Digest::MD5.hexdigest(normalized)
         end
 
-        def duplicate?(hash)
-          db[:local_knowledge].where(content_hash: hash).any?
-        rescue StandardError => e
-          handle_exception(e, level: :debug, operation: 'apollo.local.duplicate_check', hash: hash)
-          false
-        end
-
         def start_without_lock
           return if @started
           return unless local_enabled? && data_local_available?
@@ -339,7 +336,8 @@ module Legion
           content = normalize_text_input(content)
           raw_content = normalize_raw_content_input(opts[:raw_content], fallback: content)
           hash = content_hash(content)
-          return deduplicated_ingest(hash) if duplicate?(hash)
+          duplicate = deduplicated_ingest(hash, expires_at: opts[:expires_at])
+          return duplicate if duplicate
 
           log.info do
             "Apollo::Local ingest accepted content_length=#{content.to_s.length} " \
@@ -357,9 +355,10 @@ module Legion
           log.info { "Apollo::Local ingest stored id=#{id} hash=#{hash}" }
           { success: true, mode: :local, id: id }
         rescue Sequel::UniqueConstraintViolation
-          raise unless duplicate?(hash)
+          duplicate = deduplicated_ingest(hash, expires_at: opts[:expires_at])
+          raise unless duplicate
 
-          deduplicated_ingest(hash)
+          duplicate
         end
 
         def build_ingest_row(content:, raw_content:, hash:, tags:, **opts) # rubocop:disable Metrics/MethodLength
@@ -441,7 +440,17 @@ module Legion
           handle_exception(e, level: :warn, operation: 'apollo.local.create_source_link', entry_id: entry_id)
         end
 
-        def deduplicated_ingest(hash)
+        def deduplicated_ingest(hash, expires_at: nil) # rubocop:disable Metrics/MethodLength
+          dataset = db[:local_knowledge].where(content_hash: hash)
+          existing = dataset.select(:expires_at).first
+          return unless existing
+
+          now = Time.now.utc.strftime('%Y-%m-%dT%H:%M:%S.%LZ')
+          previous_expiry = existing[:expires_at]
+          if previous_expiry && previous_expiry <= now
+            dataset.where(Sequel.lit('expires_at <= ?', now))
+                   .update(expires_at: expires_at || compute_expires_at, updated_at: now)
+          end
           log.info { "Apollo::Local ingest deduplicated hash=#{hash}" }
           { success: true, mode: :deduplicated }
         end
