@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.5.10] - 2026-10-29
+
+### Fixed
+- Apply local eligibility filters before filling the candidate budget, streaming full-text, blank, and fallback searches so rejected rows cannot hide later matching knowledge.
+
 ## [0.5.9] - 2026-10-29
 
 ### Fixed
